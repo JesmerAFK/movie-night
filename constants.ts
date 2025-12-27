@@ -5,9 +5,5 @@ export const POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500";
 
 // IMPORTANT: Replace this with your actual deployed backend URL (e.g. https://my-app.railway.app)
 // For local development, we dynamically use the current hostname (localhost or IP)
-// Prefer localhost for the 'Clean' experience, fallback to Render
-export const BACKEND_URL = (typeof window !== 'undefined' && (window as any).MB_BACKEND_URL)
-  ? (window as any).MB_BACKEND_URL
-  : (location.hostname === 'localhost' || location.hostname === '127.0.0.1')
-    ? "http://localhost:8000"
-    : "https://movie-night-xe5i.onrender.com";
+// Use your live Railway backend URL
+export const BACKEND_URL = "https://web-production-d008.up.railway.app";
