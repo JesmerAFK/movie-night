@@ -15,10 +15,16 @@ interface PlayerProps {
 // Configuration
 const SERVERS = [
   {
-    name: "Local Backend (MP4)",
-    // Uses the backend /api/stream endpoint
+    name: "Express (Fast)",
+    // Tries to play directly from the source for maximum speed
     getUrl: (title: string, quality?: string, year?: number, season: number = 1, episode: number = 1) =>
-      `${BACKEND_URL}/api/stream?title=${encodeURIComponent(title)}${quality ? `&quality=${quality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}`
+      `${BACKEND_URL}/api/stream?title=${encodeURIComponent(title)}${quality ? `&quality=${quality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=false`
+  },
+  {
+    name: "Safe Proxy (Buffered)",
+    // Uses the backend as a middleman (more compatible but slower)
+    getUrl: (title: string, quality?: string, year?: number, season: number = 1, episode: number = 1) =>
+      `${BACKEND_URL}/api/stream?title=${encodeURIComponent(title)}${quality ? `&quality=${quality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=true`
   }
 ];
 

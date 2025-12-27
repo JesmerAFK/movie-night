@@ -125,7 +125,7 @@ async def proxy_subtitle(url: str):
         raise HTTPException(status_code=500)
 
 @app.get("/api/stream")
-async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1):
+async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True):
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
@@ -133,6 +133,11 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode)
         if not stream_url:
              raise HTTPException(status_code=404, detail="Stream not found")
+
+        # If proxy is false, we just redirect the browser to the direct link
+        # This is MUCH faster but might hit CORS or Referer blocks
+        if not proxy:
+            return RedirectResponse(url=stream_url)
 
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
