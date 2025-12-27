@@ -1,3 +1,4 @@
+import moviebox_api
 from moviebox_api import Session, Search, SubjectType, DownloadableTVSeriesFilesDetail, TVSeriesDetails, MIRROR_HOSTS
 from moviebox_api.download import DownloadableMovieFilesDetail
 from moviebox_api.models import SearchResultsItem
@@ -10,15 +11,24 @@ import re
 async def get_movie_files(title: str, year: int = None, season: int = 1, episode: int = 1):
     # Try different mirrors if one is blocked
     mirrors = list(MIRROR_HOSTS)
-    random.shuffle(mirrors) # Try in random order
+    # Remove the one we know is blocked on Render if it's there
+    if 'h5.aoneroom.com' in mirrors:
+        mirrors.remove('h5.aoneroom.com')
     
-    # Render is often blocked. We try up to 3 mirrors.
-    for mirror in mirrors[:3]:
-        # Note: moviebox_api might not support setting host per session easily
-        # but we can try to use a fresh session at least.
-        session = Session()
+    random.shuffle(mirrors)
+    # Put some known good ones first if they exist
+    prime_mirrors = ['moviebox.ph', 'netnaija.video', 'mbbox.video']
+    mirrors = [m for m in prime_mirrors if m in mirrors] + [m for m in mirrors if m not in prime_mirrors]
+
+    for mirror in mirrors[:4]:
         try:
-            print(f"DEBUG: Attempting search on mirror {mirror} for '{title}'...")
+            # Force the library to use this mirror
+            moviebox_api.SELECTED_HOST = mirror
+            moviebox_api.HOST_URL = f"https://{mirror}"
+            
+            print(f"DEBUG: Attempting MIRROR: {mirror} for '{title}'...")
+            
+            session = Session()
             items = []
             search_queries = [title]
             
@@ -29,7 +39,7 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
             for query in search_queries:
                 try:
                     search_movie = Search(session=session, query=query, subject_type=SubjectType.MOVIES)
-                    res = await asyncio.wait_for(search_movie.get_content(), timeout=8.0)
+                    res = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
                     found = res.get('items', [])
                     if found:
                         items.extend(found)
@@ -38,7 +48,7 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
                 
                 try:
                     search_tv = Search(session=session, query=query, subject_type=SubjectType.TV_SERIES)
-                    res = await asyncio.wait_for(search_tv.get_content(), timeout=8.0)
+                    res = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
                     found = res.get('items', [])
                     if found:
                         items.extend(found)
@@ -46,9 +56,10 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
                 except: pass
 
             if not items:
-                continue # Try next mirror
+                print(f"DEBUG: No results on mirror {mirror}, trying next...")
+                continue
 
-            # Smart Matching Logic
+            # Smart Matching
             cleaned_query = title.lower().strip()
             candidates = []
             for item in items:
@@ -83,7 +94,6 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
             target_item = SearchResultsItem(**target_item_dict)
             is_tv = target_item.subjectType == SubjectType.TV_SERIES
 
-            # Extraction - This is where 403 Forbidden usually happens
             if is_tv:
                 dmfd = DownloadableTVSeriesFilesDetail(session, target_item)
                 files_container = await asyncio.wait_for(dmfd.get_content(season=season, episode=episode), timeout=15.0)
@@ -106,19 +116,18 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
                  subtitles = files_container['subtitles']
                 
             if downloads:
-                print(f"DEBUG: Successfully found {len(downloads)} quality options on mirror {mirror}")
+                print(f"DEBUG: SUCCESS on mirror {mirror}!")
                 return downloads, subtitles
             else:
-                print(f"DEBUG: Found movie but no video links on mirror {mirror}")
+                print(f"DEBUG: Mirror {mirror} returned no links.")
 
         except Exception as e:
-            print(f"DEBUG: Mirror {mirror} failed with error: {e}")
-            continue # Try next mirror
+            print(f"DEBUG: Mirror {mirror} error: {e}")
+            continue
 
     return None, None
 
 async def get_media_metadata(title: str, year: int = None):
-    # Returns { is_tv: bool, seasons: int (optional) }
     session = Session()
     try:
         search_movie = Search(session=session, query=title, subject_type=SubjectType.MOVIES)
