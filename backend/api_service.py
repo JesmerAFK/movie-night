@@ -6,25 +6,48 @@ import difflib
 
 # Helper to fetch and parse files with smart matching
 async def get_movie_files(title: str, year: int = None, season: int = 1, episode: int = 1):
+    # Use a stealthy session to avoid being blocked on Render IPs
     session = Session()
+    session.headers.update({
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Referer': 'https://fmoviesunblocked.net/',
+        'Origin': 'https://fmoviesunblocked.net'
+    })
     try:
         # 1. Search (Movies first, then TV)
-        # Use a timeout to prevent Render from hanging
-        try:
-            search_movie = Search(session=session, query=title, subject_type=SubjectType.MOVIES)
-            results_movie = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
-            items = results_movie.get('items', [])
-        except asyncio.TimeoutError:
-            items = []
-        
-        try:
-            search_tv = Search(session=session, query=title, subject_type=SubjectType.TV_SERIES)
-            results_tv = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
-            items.extend(results_tv.get('items', []))
-        except asyncio.TimeoutError:
-            pass
-             
+        items = []
+        search_queries = [title]
+        # If title has special chars, try a clean version too
+        clean_title = "".join(c for c in title if c.isalnum() or c.isspace())
+        if clean_title != title:
+            search_queries.append(clean_title)
+
+        for query in search_queries:
+            print(f"DEBUG: Searching for '{query}' on Render...")
+            try:
+                search_movie = Search(session=session, query=query, subject_type=SubjectType.MOVIES)
+                res = await asyncio.wait_for(search_movie.get_content(), timeout=8.0)
+                found = res.get('items', [])
+                if found:
+                    print(f"DEBUG: Found {len(found)} movies for '{query}'")
+                    items.extend(found)
+                    break # Stop if we found something
+            except: pass
+            
+            try:
+                search_tv = Search(session=session, query=query, subject_type=SubjectType.TV_SERIES)
+                res = await asyncio.wait_for(search_tv.get_content(), timeout=8.0)
+                found = res.get('items', [])
+                if found:
+                    print(f"DEBUG: Found {len(found)} series for '{query}'")
+                    items.extend(found)
+                    break
+            except: pass
+
         if not items:
+            print(f"DEBUG: No results found for '{title}' after all attempts.")
             return None, None
 
         # Smart Matching Logic
