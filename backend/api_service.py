@@ -9,13 +9,20 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
     session = Session()
     try:
         # 1. Search (Movies first, then TV)
-        search_movie = Search(session=session, query=title, subject_type=SubjectType.MOVIES)
-        results_movie = await search_movie.get_content()
-        items = results_movie.get('items', [])
+        # Use a timeout to prevent Render from hanging
+        try:
+            search_movie = Search(session=session, query=title, subject_type=SubjectType.MOVIES)
+            results_movie = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
+            items = results_movie.get('items', [])
+        except asyncio.TimeoutError:
+            items = []
         
-        search_tv = Search(session=session, query=title, subject_type=SubjectType.TV_SERIES)
-        results_tv = await search_tv.get_content()
-        items.extend(results_tv.get('items', []))
+        try:
+            search_tv = Search(session=session, query=title, subject_type=SubjectType.TV_SERIES)
+            results_tv = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
+            items.extend(results_tv.get('items', []))
+        except asyncio.TimeoutError:
+            pass
              
         if not items:
             return None, None
