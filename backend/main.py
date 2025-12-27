@@ -166,13 +166,17 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                 await client.aclose()
 
         gen = stream_generator()
-        status_code = await anext(gen)
-        response_headers = await anext(gen)
-
-        return StreamingResponse(gen, status_code=status_code, headers=response_headers, media_type="video/mp4")
+        try:
+            status_code = await anext(gen)
+            response_headers = await anext(gen)
+            return StreamingResponse(gen, status_code=status_code, headers=response_headers, media_type="video/mp4")
+        except StopAsyncIteration:
+             raise HTTPException(status_code=403, detail="Source blocked or unavailable.")
 
     except Exception as e:
         print(f"Stream processing failure: {e}")
+        if "403" in str(e):
+             raise HTTPException(status_code=403, detail="Access Forbidden by source IP block.")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
