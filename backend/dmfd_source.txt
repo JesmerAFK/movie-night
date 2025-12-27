@@ -1,0 +1,14 @@
+    def __init__(self, session: Session, item: SearchResultsItem | ItemJsonDetailsModel):
+        """Constructor for `BaseDownloadableFilesDetail`
+
+        Args:
+            session (Session): MovieboxAPI request session.
+            item (SearchResultsItem | ItemJsonDetailsModel): Movie/TVSeries item to handle.
+        """
+        assert_instance(session, Session, "session")
+        assert_instance(item, (SearchResultsItem, ItemJsonDetailsModel), "item")
+
+        self.session = session
+        self._item: SearchResultsItem | PostListItemSubjectModel = (
+            item.resData.postList.items[0].subject if isinstance(item, ItemJsonDetailsModel) else item
+        )
