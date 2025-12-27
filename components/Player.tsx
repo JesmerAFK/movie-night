@@ -20,8 +20,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [errorType, setErrorType] = useState<'network' | 'format' | null>(null);
 
   // Quality Selection State
-  const [qualities, setQualities] = useState<{ quality: string, url: string }[]>([]);
-  const [selectedQualityUrl, setSelectedQualityUrl] = useState<string>('');
+  const [qualities, setQualities] = useState<string[]>([]);
+  const [selectedQuality, setSelectedQuality] = useState<string>('');
 
   // Subtitle State
   const [subtitles, setSubtitles] = useState<{ language: string, url: string }[]>([]);
@@ -46,11 +46,12 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [episode, setEpisode] = useState(1);
 
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hlsRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const titleToSearch = movie.title || movie.name || "";
   const year = movie.release_date ? parseInt(movie.release_date.split('-')[0]) : (movie.first_air_date ? parseInt(movie.first_air_date.split('-')[0]) : undefined);
+
+  const currentUrl = `${BACKEND_URL}/api/stream?title=${encodeURIComponent(titleToSearch)}${selectedQuality ? `&quality=${selectedQuality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=${!useEmbed}`;
 
   useEffect(() => {
     return () => {
@@ -214,7 +215,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     ]).then(([qualityData, subData]) => {
       setQualities(qualityData);
       if (qualityData.length > 0) {
-        setSelectedQualityUrl(qualityData[0].url);
+        setSelectedQuality(qualityData[0]);
       }
       setSubtitles(subData);
       setLoading(false);
@@ -224,33 +225,11 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     });
   }, [titleToSearch, year, season, episode]);
 
-  // Handle HLS and Video Source
+  // Handle Video Source
   useEffect(() => {
-    if (!videoRef.current || !selectedQualityUrl) return;
-
-    const video = videoRef.current;
-
-    // Cleanup previous instance
-    if (hlsRef.current) {
-      hlsRef.current.destroy();
-      hlsRef.current = null;
-    }
-
-    if (selectedQualityUrl.includes('.m3u8')) {
-      // Import HLS only when needed or use window.Hls if loaded via CDN
-      const Hls = (window as any).Hls;
-      if (Hls && Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(selectedQualityUrl);
-        hls.attachMedia(video);
-        hlsRef.current = hls;
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = selectedQualityUrl;
-      }
-    } else {
-      video.src = selectedQualityUrl;
-    }
-  }, [selectedQualityUrl]);
+    if (!videoRef.current || useEmbed) return;
+    videoRef.current.src = currentUrl;
+  }, [currentUrl, useEmbed]);
 
   // Reset state on title change
   useEffect(() => {
@@ -258,7 +237,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     setEpisode(1);
     setIsSeries(false);
     setAvailableSeasonsData([]);
-    setSelectedQualityUrl('');
+    setSelectedQuality('');
     setSelectedSubtitle('');
     setErrorType(null);
   }, [titleToSearch]);
@@ -268,10 +247,10 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     setErrorType(null);
 
     // Only restore playback position if the URL actually changed
-    if (videoRef.current && currentTime > 0 && lastUrlRef.current !== selectedQualityUrl) {
+    if (videoRef.current && currentTime > 0 && lastUrlRef.current !== currentUrl) {
       videoRef.current.currentTime = currentTime;
     }
-    lastUrlRef.current = selectedQualityUrl;
+    lastUrlRef.current = currentUrl;
 
     applySubtitles();
   };
@@ -288,8 +267,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     setErrorType('format');
   };
 
-  const handleQualityChange = (url: string) => {
-    setSelectedQualityUrl(url);
+  const handleQualityChange = (q: string) => {
+    setSelectedQuality(q);
     setLoading(true);
   };
 
@@ -315,7 +294,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     if (useEmbed) return;
     const timer = setTimeout(applySubtitles, 200);
     return () => clearTimeout(timer);
-  }, [selectedSubtitle, subtitles, selectedQualityUrl]);
+  }, [selectedSubtitle, subtitles, currentUrl]);
 
   // VidSrc Embed URL Calculation
   const tmdbId = movie.id;
@@ -390,11 +369,11 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md rounded-lg px-3 py-1 border border-white/10">
             <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Quality</span>
             <select
-              value={selectedQualityUrl}
+              value={selectedQuality}
               onChange={(e) => handleQualityChange(e.target.value)}
               className="bg-transparent text-white text-sm font-medium outline-none cursor-pointer [&>option]:bg-[#141414]"
             >
-              {qualities.map(q => <option key={q.url} value={q.url}>{q.quality}</option>)}
+              {qualities.map(q => <option key={q} value={q}>{q}</option>)}
             </select>
           </div>
         )}
@@ -438,7 +417,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           <>
             <video
               ref={videoRef}
-              key={selectedQualityUrl}
+              key={currentUrl}
               className="w-full h-full object-contain"
               autoPlay
               playsInline
@@ -451,7 +430,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
               onTimeUpdate={handleTimeUpdate}
               onLoadedMetadata={handleTimeUpdate}
             >
-              <source src={selectedQualityUrl} type="video/mp4" />
+              <source src={currentUrl} type="video/mp4" />
               {subtitles.map((sub, idx) => (
                 <track
                   key={sub.url}
