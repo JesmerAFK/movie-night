@@ -16,7 +16,7 @@ interface PlayerProps {
 
 const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [loading, setLoading] = useState(true);
-  const [currentServerIndex, setCurrentServerIndex] = useState(0);
+  const [useEmbed, setUseEmbed] = useState(false); // Toggle between Brain and Global Embed
   const [errorType, setErrorType] = useState<'network' | 'format' | null>(null);
 
   // Quality Selection State
@@ -312,9 +312,16 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
 
   // Manual subtitle track activation
   useEffect(() => {
+    if (useEmbed) return;
     const timer = setTimeout(applySubtitles, 200);
     return () => clearTimeout(timer);
   }, [selectedSubtitle, subtitles, selectedQualityUrl]);
+
+  // VidSrc Embed URL Calculation
+  const tmdbId = movie.id;
+  const embedUrl = isSeries
+    ? `https://vidsrc.to/embed/tv/${tmdbId}/${season}/${episode}`
+    : `https://vidsrc.to/embed/movie/${tmdbId}`;
 
   return (
     <div
@@ -372,8 +379,14 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           </div>
         </div>
 
-        <div className="flex items-center space-x-4">
+        <button
+          onClick={() => setUseEmbed(!useEmbed)}
+          className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all border ${useEmbed ? 'bg-[#e50914] border-[#e50914] text-white' : 'bg-black/40 border-white/20 text-gray-400 hover:text-white'}`}
+        >
+          {useEmbed ? 'Mode: Global Mirror' : 'Mode: Direct Play'}
+        </button>
 
+        {!useEmbed && (
           <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md rounded-lg px-3 py-1 border border-white/10">
             <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Quality</span>
             <select
@@ -384,7 +397,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
               {qualities.map(q => <option key={q.url} value={q.url}>{q.quality}</option>)}
             </select>
           </div>
-        </div>
+        )}
       </div>
 
       {/* Loading & Error Overlays */}
@@ -409,44 +422,55 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
 
       {/* Main Player Area */}
       <div
-        className="flex-1 relative bg-black flex items-center justify-center cursor-pointer"
-        onClick={togglePlay}
+        className="flex-1 relative bg-black flex items-center justify-center overflow-hidden"
+        onClick={() => !useEmbed && togglePlay()}
       >
-        <video
-          ref={videoRef}
-          key={selectedQualityUrl}
-          className="w-full h-full object-contain"
-          autoPlay
-          playsInline
-          preload="auto"
-          crossOrigin="anonymous"
-          onCanPlay={handleCanPlay}
-          onWaiting={handleWaiting}
-          onPlaying={handlePlaying}
-          onError={handleError}
-          onTimeUpdate={handleTimeUpdate}
-          onLoadedMetadata={handleTimeUpdate}
-        >
-          <source src={selectedQualityUrl} type="video/mp4" />
-          {subtitles.map((sub, idx) => (
-            <track
-              key={sub.url}
-              kind="subtitles"
-              src={`${BACKEND_URL}/api/subtitles/proxy?url=${encodeURIComponent(sub.url)}`}
-              srcLang={sub.language}
-              label={sub.language}
-              default={sub.url === selectedSubtitle}
-            />
-          ))}
-        </video>
+        {useEmbed ? (
+          <iframe
+            src={embedUrl}
+            className="w-full h-full border-none"
+            allowFullScreen
+            allow="autoplay; encrypted-media; picture-in-picture"
+          />
+        ) : (
+          <>
+            <video
+              ref={videoRef}
+              key={selectedQualityUrl}
+              className="w-full h-full object-contain"
+              autoPlay
+              playsInline
+              preload="auto"
+              crossOrigin="anonymous"
+              onCanPlay={handleCanPlay}
+              onWaiting={handleWaiting}
+              onPlaying={handlePlaying}
+              onError={handleError}
+              onTimeUpdate={handleTimeUpdate}
+              onLoadedMetadata={handleTimeUpdate}
+            >
+              <source src={selectedQualityUrl} type="video/mp4" />
+              {subtitles.map((sub, idx) => (
+                <track
+                  key={sub.url}
+                  kind="subtitles"
+                  src={`${BACKEND_URL}/api/subtitles/proxy?url=${encodeURIComponent(sub.url)}`}
+                  srcLang={sub.language}
+                  label={sub.language}
+                  default={sub.url === selectedSubtitle}
+                />
+              ))}
+            </video>
 
-        {/* Center Play/Pause Indicator (Flashes on click) */}
-        {!isPlaying && showControls && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-            <div className="p-8 rounded-full bg-black/40 border border-white/10 backdrop-blur-sm">
-              <Play className="w-20 h-20 text-white fill-white" />
-            </div>
-          </div>
+            {/* Center Play/Pause Indicator */}
+            {!isPlaying && showControls && (
+              <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                <div className="p-8 rounded-full bg-black/40 border border-white/10 backdrop-blur-sm">
+                  <Play className="w-20 h-20 text-white fill-white" />
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
 
@@ -575,7 +599,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           </div>
         </div>
       </div>
-    </div>
+    </div >
   );
 };
 
