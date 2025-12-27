@@ -6,15 +6,8 @@ import difflib
 
 # Helper to fetch and parse files with smart matching
 async def get_movie_files(title: str, year: int = None, season: int = 1, episode: int = 1):
-    # Use a stealthy session to avoid being blocked on Render IPs
+    # Use a fresh session for the search
     session = Session()
-    session.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': 'https://fmoviesunblocked.net/',
-        'Origin': 'https://fmoviesunblocked.net'
-    })
     try:
         # 1. Search (Movies first, then TV)
         items = []
