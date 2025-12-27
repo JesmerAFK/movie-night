@@ -2,9 +2,21 @@ import uvicorn
 from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from api_service import get_stream_url
 import requests
 import os
+import sys
+
+# Ensure backend directory is in the python path for absolute imports on deployment
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
+from api_service import (
+    get_stream_url, 
+    get_media_metadata, 
+    get_available_qualities, 
+    get_available_subtitles
+)
+import httpx
+import re
 
 app = FastAPI()
 
@@ -21,7 +33,6 @@ app.add_middleware(
 async def get_meta(title: str, year: int = None):
     if not title: return {}
     try:
-        from api_service import get_media_metadata
         return await get_media_metadata(title, year=year)
     except:
         return {}
@@ -31,7 +42,6 @@ async def get_qualities(title: str, year: int = None, season: int = 1, episode: 
     if not title:
         return []
     try:
-        from api_service import get_available_qualities
         qualities = await get_available_qualities(title, year=year, season=season, episode=episode)
         return qualities
     except:
@@ -42,7 +52,6 @@ async def get_subtitles(title: str, year: int = None, season: int = 1, episode: 
     if not title:
         return []
     try:
-        from api_service import get_available_subtitles
         subs = await get_available_subtitles(title, year=year, season=season, episode=episode)
         return subs
     except Exception as e:
@@ -53,7 +62,6 @@ async def get_subtitles(title: str, year: int = None, season: int = 1, episode: 
 async def proxy_subtitle(url: str):
     if not url: raise HTTPException(status_code=400)
     try:
-        import httpx
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
@@ -83,7 +91,6 @@ async def proxy_subtitle(url: str):
             # 2. Check if it's already VTT or needs conversion
             is_vtt = text.startswith("WEBVTT")
             
-            import re
             # Standardize timestamps: 00:00:00,000 -> 00:00:00.000
             text = re.sub(r"(\d{2}:\d{2}:\d{2}),(\d{3})", r"\1.\2", text)
             
@@ -127,7 +134,6 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         raise HTTPException(status_code=400, detail="Title is required")
 
     try:
-        from api_service import get_stream_url
         stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode)
         if not stream_url:
              print("Stream not found")

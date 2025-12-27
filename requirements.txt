@@ -2,3 +2,5 @@ fastapi
 uvicorn
 moviebox-api
 requests
+httpx
+python-multipart
