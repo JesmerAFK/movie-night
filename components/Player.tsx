@@ -227,9 +227,9 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
 
   // Handle Video Source
   useEffect(() => {
-    if (!videoRef.current || useEmbed) return;
+    if (!videoRef.current || useEmbed || !selectedQuality) return;
     videoRef.current.src = currentUrl;
-  }, [currentUrl, useEmbed]);
+  }, [currentUrl, useEmbed, selectedQuality]);
 
   // Reset state on title change
   useEffect(() => {
@@ -391,9 +391,24 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           {errorType && (
             <div className="text-center p-8 bg-black/80 rounded-2xl border border-white/10 backdrop-blur-xl max-w-sm">
               <AlertCircle className="w-16 h-16 text-[#e50914] mx-auto mb-4" />
-              <h2 className="text-white text-xl font-bold mb-2">Something went wrong</h2>
-              <p className="text-gray-400 text-sm mb-6">We're having trouble playing this title. Please try again later.</p>
-              <button onClick={() => window.location.reload()} className="w-full py-3 bg-white text-black font-bold rounded hover:bg-gray-200 transition">Retry</button>
+              <h2 className="text-white text-xl font-bold mb-2">Source Blocked</h2>
+              <p className="text-gray-400 text-sm mb-6">
+                Render is being blocked by the movie servers. For the <b>Ad-Free Localhost</b> experience, make sure your backend is running on your laptop.
+              </p>
+              <div className="flex flex-col space-y-3">
+                <button onClick={() => window.location.reload()} className="w-full py-3 bg-white text-black font-bold rounded hover:bg-gray-200 transition">Try Again</button>
+                <button onClick={() => setUseEmbed(true)} className="w-full py-3 bg-transparent border border-white/20 text-white font-bold rounded hover:bg-white/10 transition">Use Global Mirror (Ads)</button>
+              </div>
+            </div>
+          )}
+          {!loading && !errorType && !useEmbed && qualities.length === 0 && (
+            <div className="text-center p-8 bg-black/80 rounded-2xl border border-white/10 backdrop-blur-xl max-w-sm">
+              <WifiOff className="w-16 h-16 text-gray-500 mx-auto mb-4" />
+              <h2 className="text-white text-xl font-bold mb-2">No Clean Links Found</h2>
+              <p className="text-gray-400 text-sm mb-6">
+                The cloud server is blocked. To get the clean version, run the backend on your laptop or switch to Global Mirror.
+              </p>
+              <button onClick={() => setUseEmbed(true)} className="w-full py-3 bg-[#e50914] text-white font-bold rounded hover:bg-[#b81d24] transition">Switch to Global Mirror</button>
             </div>
           )}
         </div>
