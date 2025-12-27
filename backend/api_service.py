@@ -243,6 +243,23 @@ async def get_available_qualities(title: str, year: int = None, season: int = 1,
 
     return sorted(list(qualities), key=sort_key, reverse=True)
 
+async def get_available_qualities_with_urls(title: str, year: int = None, season: int = 1, episode: int = 1):
+    downloads, _ = await get_movie_files(title, year, season, episode)
+    if not downloads:
+        return []
+    
+    results = []
+    for d in downloads:
+        params = vars(d) if hasattr(d, '__dict__') else (d if isinstance(d, dict) else {})
+        url = params.get('url')
+        res_raw = params.get('resolution') or 'Unknown'
+        if url and url.startswith('http'):
+            results.append({
+                'quality': str(res_raw),
+                'url': url
+            })
+    return results
+
 async def get_available_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1):
     _, subtitles = await get_movie_files(title, year, season, episode)
     if not subtitles: return []

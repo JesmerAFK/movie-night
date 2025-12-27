@@ -12,21 +12,7 @@ interface PlayerProps {
   onBack: () => void;
 }
 
-// Configuration
-const SERVERS = [
-  {
-    name: "Express (Fast)",
-    // Tries to play directly from the source for maximum speed
-    getUrl: (title: string, quality?: string, year?: number, season: number = 1, episode: number = 1) =>
-      `${BACKEND_URL}/api/stream?title=${encodeURIComponent(title)}${quality ? `&quality=${quality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=false`
-  },
-  {
-    name: "Safe Proxy (Buffered)",
-    // Uses the backend as a middleman (more compatible but slower)
-    getUrl: (title: string, quality?: string, year?: number, season: number = 1, episode: number = 1) =>
-      `${BACKEND_URL}/api/stream?title=${encodeURIComponent(title)}${quality ? `&quality=${quality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=true`
-  }
-];
+// Configuration removed - we now play directly from URLs provided by the backend
 
 const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [loading, setLoading] = useState(true);
@@ -34,8 +20,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [errorType, setErrorType] = useState<'network' | 'format' | null>(null);
 
   // Quality Selection State
-  const [qualities, setQualities] = useState<string[]>([]);
-  const [selectedQuality, setSelectedQuality] = useState<string>('');
+  const [qualities, setQualities] = useState<{ quality: string, url: string }[]>([]);
+  const [selectedQualityUrl, setSelectedQualityUrl] = useState<string>('');
 
   // Subtitle State
   const [subtitles, setSubtitles] = useState<{ language: string, url: string }[]>([]);
@@ -60,12 +46,11 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const [episode, setEpisode] = useState(1);
 
   const videoRef = useRef<HTMLVideoElement>(null);
+  const hlsRef = useRef<any>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const titleToSearch = movie.title || movie.name || "";
   const year = movie.release_date ? parseInt(movie.release_date.split('-')[0]) : (movie.first_air_date ? parseInt(movie.first_air_date.split('-')[0]) : undefined);
-
-  const currentUrl = SERVERS[currentServerIndex].getUrl(titleToSearch, selectedQuality, year, season, episode);
 
   useEffect(() => {
     return () => {
@@ -229,7 +214,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     ]).then(([qualityData, subData]) => {
       setQualities(qualityData);
       if (qualityData.length > 0) {
-        setSelectedQuality(qualityData[0]);
+        setSelectedQualityUrl(qualityData[0].url);
       }
       setSubtitles(subData);
       setLoading(false);
@@ -239,13 +224,41 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     });
   }, [titleToSearch, year, season, episode]);
 
+  // Handle HLS and Video Source
+  useEffect(() => {
+    if (!videoRef.current || !selectedQualityUrl) return;
+
+    const video = videoRef.current;
+
+    // Cleanup previous instance
+    if (hlsRef.current) {
+      hlsRef.current.destroy();
+      hlsRef.current = null;
+    }
+
+    if (selectedQualityUrl.includes('.m3u8')) {
+      // Import HLS only when needed or use window.Hls if loaded via CDN
+      const Hls = (window as any).Hls;
+      if (Hls && Hls.isSupported()) {
+        const hls = new Hls();
+        hls.loadSource(selectedQualityUrl);
+        hls.attachMedia(video);
+        hlsRef.current = hls;
+      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        video.src = selectedQualityUrl;
+      }
+    } else {
+      video.src = selectedQualityUrl;
+    }
+  }, [selectedQualityUrl]);
+
   // Reset state on title change
   useEffect(() => {
     setSeason(1);
     setEpisode(1);
     setIsSeries(false);
     setAvailableSeasonsData([]);
-    setSelectedQuality('');
+    setSelectedQualityUrl('');
     setSelectedSubtitle('');
     setErrorType(null);
   }, [titleToSearch]);
@@ -254,13 +267,11 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     setLoading(false);
     setErrorType(null);
 
-    // Only restore playback position if the URL actually changed (Source Refresh)
-    // This prevents the "jumping" and "flickering" during normal skips
-    const fullUrl = `${currentUrl}-${selectedSubtitle}`;
-    if (videoRef.current && currentTime > 0 && lastUrlRef.current !== fullUrl) {
+    // Only restore playback position if the URL actually changed
+    if (videoRef.current && currentTime > 0 && lastUrlRef.current !== selectedQualityUrl) {
       videoRef.current.currentTime = currentTime;
     }
-    lastUrlRef.current = fullUrl;
+    lastUrlRef.current = selectedQualityUrl;
 
     applySubtitles();
   };
@@ -277,8 +288,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
     setErrorType('format');
   };
 
-  const handleQualityChange = (q: string) => {
-    setSelectedQuality(q);
+  const handleQualityChange = (url: string) => {
+    setSelectedQualityUrl(url);
     setLoading(true);
   };
 
@@ -303,7 +314,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   useEffect(() => {
     const timer = setTimeout(applySubtitles, 200);
     return () => clearTimeout(timer);
-  }, [selectedSubtitle, subtitles, currentUrl]);
+  }, [selectedSubtitle, subtitles, selectedQualityUrl]);
 
   return (
     <div
@@ -366,11 +377,11 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md rounded-lg px-3 py-1 border border-white/10">
             <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Quality</span>
             <select
-              value={selectedQuality}
+              value={selectedQualityUrl}
               onChange={(e) => handleQualityChange(e.target.value)}
               className="bg-transparent text-white text-sm font-medium outline-none cursor-pointer [&>option]:bg-[#141414]"
             >
-              {qualities.map(q => <option key={q} value={q}>{q}</option>)}
+              {qualities.map(q => <option key={q.url} value={q.url}>{q.quality}</option>)}
             </select>
           </div>
         </div>
@@ -403,7 +414,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
       >
         <video
           ref={videoRef}
-          key={currentUrl}
+          key={selectedQualityUrl}
           className="w-full h-full object-contain"
           autoPlay
           playsInline
@@ -416,7 +427,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           onTimeUpdate={handleTimeUpdate}
           onLoadedMetadata={handleTimeUpdate}
         >
-          <source src={currentUrl} type="video/mp4" />
+          <source src={selectedQualityUrl} type="video/mp4" />
           {subtitles.map((sub, idx) => (
             <track
               key={sub.url}

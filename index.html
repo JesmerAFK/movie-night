@@ -1,56 +1,64 @@
 <!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Movie Night by JMAFK</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <script>
-      tailwind.config = {
-        theme: {
-          extend: {
-            colors: {
-              netflix: {
-                black: '#141414',
-                red: '#E50914',
-                darkRed: '#B81D24',
-                gray: '#e5e5e5',
-                darkGray: '#333333',
-              },
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Movie Night by JMAFK</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            netflix: {
+              black: '#141414',
+              red: '#E50914',
+              darkRed: '#B81D24',
+              gray: '#e5e5e5',
+              darkGray: '#333333',
             },
-            fontFamily: {
-              sans: ['Inter', 'Helvetica', 'Arial', 'sans-serif'],
-            },
-            scale: {
-              '102': '1.02',
-            }
           },
+          fontFamily: {
+            sans: ['Inter', 'Helvetica', 'Arial', 'sans-serif'],
+          },
+          scale: {
+            '102': '1.02',
+          }
         },
-      };
-    </script>
-    <style>
-      body {
-        background-color: #141414;
-        color: white;
-        font-family: 'Inter', sans-serif;
-        overflow-x: hidden;
-      }
-      /* Hide scrollbar for Chrome, Safari and Opera */
-      .no-scrollbar::-webkit-scrollbar {
-        display: none;
-      }
-      /* Hide scrollbar for IE, Edge and Firefox */
-      .no-scrollbar {
-        -ms-overflow-style: none;  /* IE and Edge */
-        scrollbar-width: none;  /* Firefox */
-      }
-      .backdrop-gradient {
-        background: linear-gradient(to top, #141414 10%, transparent 90%);
-      }
-      .backdrop-gradient-top {
-        background: linear-gradient(to bottom, rgba(20,20,20,0.7) 10%, transparent 90%);
-      }
-    </style>
+      },
+    };
+  </script>
+  <style>
+    body {
+      background-color: #141414;
+      color: white;
+      font-family: 'Inter', sans-serif;
+      overflow-x: hidden;
+    }
+
+    /* Hide scrollbar for Chrome, Safari and Opera */
+    .no-scrollbar::-webkit-scrollbar {
+      display: none;
+    }
+
+    /* Hide scrollbar for IE, Edge and Firefox */
+    .no-scrollbar {
+      -ms-overflow-style: none;
+      /* IE and Edge */
+      scrollbar-width: none;
+      /* Firefox */
+    }
+
+    .backdrop-gradient {
+      background: linear-gradient(to top, #141414 10%, transparent 90%);
+    }
+
+    .backdrop-gradient-top {
+      background: linear-gradient(to bottom, rgba(20, 20, 20, 0.7) 10%, transparent 90%);
+    }
+  </style>
   <script type="importmap">
 {
   "imports": {
@@ -61,10 +69,12 @@
   }
 }
 </script>
-<link rel="stylesheet" href="/index.css">
+  <link rel="stylesheet" href="/index.css">
 </head>
-  <body>
-    <div id="root"></div>
+
+<body>
+  <div id="root"></div>
   <script type="module" src="/index.tsx"></script>
 </body>
+
 </html>

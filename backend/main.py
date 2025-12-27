@@ -39,13 +39,8 @@ async def get_meta(title: str, year: int = None):
 
 @app.get("/api/qualities")
 async def get_qualities(title: str, year: int = None, season: int = 1, episode: int = 1):
-    if not title:
-        return []
-    try:
-        qualities = await get_available_qualities(title, year=year, season=season, episode=episode)
-        return qualities
-    except:
-        return []
+    from api_service import get_available_qualities_with_urls
+    return await get_available_qualities_with_urls(title, year, season, episode)
 
 @app.get("/api/subtitles")
 async def get_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1):
@@ -124,72 +119,8 @@ async def proxy_subtitle(url: str):
         print(f"Sub proxy total failure: {e}")
         raise HTTPException(status_code=500)
 
-@app.get("/api/stream")
-async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True):
-    if not title:
-        raise HTTPException(status_code=400, detail="Title is required")
-
-    try:
-        stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode)
-        if not stream_url:
-             raise HTTPException(status_code=404, detail="Stream not found")
-
-        # If proxy is false, we just redirect the browser to the direct link
-        # This is MUCH faster but might hit CORS or Referer blocks
-        if not proxy:
-            return RedirectResponse(url=stream_url)
-
-        headers = {
-            'Referer': 'https://fmoviesunblocked.net/', 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-        }
-        
-        range_header = request.headers.get('Range')
-        proxy_headers = headers.copy()
-        if range_header:
-            proxy_headers['Range'] = range_header
-                  
-        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
-        
-        async def stream_generator():
-            try:
-                async with client.stream("GET", stream_url, headers=proxy_headers) as r:
-                    # Forward status code (200 or 206)
-                    yield r.status_code
-                    
-                    # Forward essential headers
-                    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-                    resp_headers = {
-                        k: v for k, v in r.headers.items() 
-                        if k.lower() not in excluded_headers
-                    }
-                    if 'Content-Length' in r.headers:
-                        resp_headers['Content-Length'] = r.headers['Content-Length']
-                    
-                    yield resp_headers
-                    
-                    async for chunk in r.aiter_bytes(chunk_size=1024*128):
-                        yield chunk
-            except Exception as e:
-                print(f"Streaming error: {e}")
-            finally:
-                await client.aclose()
-
-        # We need to manually handle the first two yields for status and headers
-        gen = stream_generator()
-        status_code = await anext(gen)
-        response_headers = await anext(gen)
-
-        return StreamingResponse(
-            gen,
-            status_code=status_code,
-            headers=response_headers,
-            media_type="video/mp4"
-        )
-
-    except Exception as e:
-        print(f"Stream processing failure: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+# The /api/stream endpoint is removed to prevent proxying and 403 blocks.
+# Playback now happens directly in the browser via urls from /api/qualities.
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
