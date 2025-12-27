@@ -126,117 +126,64 @@ async def proxy_subtitle(url: str):
 
 @app.get("/api/stream")
 async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1):
-    """
-    Proxies the video stream.
-    """
-    # print(f"Requesting stream for: {title} (Year: {year}, Quality: {quality}, S{season}E{episode})")
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
     try:
         stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode)
         if not stream_url:
-             print("Stream not found")
              raise HTTPException(status_code=404, detail="Stream not found")
 
-        # print(f"Target URL: {stream_url}")
-        
-        # We know we need a Referer header for some hosts.
-        # Ideally we check which host it is, but broadly adding it shouldn't hurt?
-        # The dump showed referer: 'https://fmoviesunblocked.net/' for 'fzmovies.cms' source.
-        # But 'hakunaymatata.com' might be different?
-        # Actually my test showed that adding that referer WORKED for hakunaymatata.
-        
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
         }
         
-        # PROXYING THE CONTENT
-        # Streaming response is required to pipe the video data.
+        range_header = request.headers.get('Range')
+        proxy_headers = headers.copy()
+        if range_header:
+            proxy_headers['Range'] = range_header
+                  
+        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
         
-        try:
-             # We use a generator to stream chunks
-             def iterfile():
-                 with requests.get(stream_url, headers=headers, stream=True) as r:
-                     if r.status_code >= 400:
-                         print(f"Proxy Error: {r.status_code} {r.text[:100]}")
-                         # If proxy fails, maybe try redirect as fallback?
-                         # yield b""
-                         return
-                         
-                     for chunk in r.iter_content(chunk_size=8192):
-                         yield chunk
-             
-             # Get initial headers to pass through (content-type, content-length)
-             # Note: Passsing Content-Length is important for seeking, but can be tricky with chunks.
-             # FastAPI StreamingResponse handles Transfer-Encoding: chunked automatically if no length.
-             # But Players like 'range' requests (206 Partial Content). 
-             
-             # Implementing full Range support in a simple proxy is complex.
-             # If we don't support Range, seeking won't work well.
-             
-             # Alternative: Direct Redirect but try to trick the Referer? 
-             # Browser Referer cannot be spoofed easily for <video src>.
-             
-             # If we simply Return RedirectResponse, the browser requests the URL directly.
-             # The browser will send 'http://localhost:3000' as Referer. 
-             # The server checks for 'fmoviesunblocked.net'. -> 403 Forbidden.
-             
-             # PROXY is the only way unless we can generate a URL that doesn't check Referer.
-             
-             # Let's try basic StreamingResponse first.
-             # To support seeking, we'd need to handle the 'Range' header from the incoming 'request'
-             # and pass it to the upstream requests.get.
-             
-             range_header = request.headers.get('Range')
-             proxy_headers = headers.copy()
-             if range_header:
-                 proxy_headers['Range'] = range_header
-                 
-             # Make the request
-             # We must use stream=True
-             external_req = requests.get(stream_url, headers=proxy_headers, stream=True)
-             
-             # Forward status code (200 or 206)
-             status_code = external_req.status_code
-             
-             # Forward essential headers
-             excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-             response_headers = {
-                 k: v for k, v in external_req.headers.items() 
-                 if k.lower() not in excluded_headers
-             }
-             # Explicitly set Content-Length if present
-             if 'Content-Length' in external_req.headers:
-                 response_headers['Content-Length'] = external_req.headers['Content-Length']
-             
-             # Create generator
-             def iter_content():
-                 try:
-                     for chunk in external_req.iter_content(chunk_size=1024*64):
-                         if chunk:
-                             yield chunk
-                 except Exception as e:
-                     print(f"Streaming error: {e}")
-                 finally:
-                     external_req.close()
+        async def stream_generator():
+            try:
+                async with client.stream("GET", stream_url, headers=proxy_headers) as r:
+                    # Forward status code (200 or 206)
+                    yield r.status_code
+                    
+                    # Forward essential headers
+                    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+                    resp_headers = {
+                        k: v for k, v in r.headers.items() 
+                        if k.lower() not in excluded_headers
+                    }
+                    if 'Content-Length' in r.headers:
+                        resp_headers['Content-Length'] = r.headers['Content-Length']
+                    
+                    yield resp_headers
+                    
+                    async for chunk in r.aiter_bytes(chunk_size=1024*128):
+                        yield chunk
+            except Exception as e:
+                print(f"Streaming error: {e}")
+            finally:
+                await client.aclose()
 
-             return StreamingResponse(
-                 iter_content(),
-                 status_code=status_code,
-                 headers=response_headers,
-                 media_type=external_req.headers.get('Content-Type', 'video/mp4')
-             )
+        # We need to manually handle the first two yields for status and headers
+        gen = stream_generator()
+        status_code = await anext(gen)
+        response_headers = await anext(gen)
 
-        except Exception as e:
-            print(f"Proxy setup failed: {e}")
-            raise HTTPException(status_code=500, detail="Proxy failed")
+        return StreamingResponse(
+            gen,
+            status_code=status_code,
+            headers=response_headers,
+            media_type="video/mp4"
+        )
 
     except Exception as e:
-        print(f"Error processing {title}: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Stream processing failure: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
