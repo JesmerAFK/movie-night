@@ -431,6 +431,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
             className="w-full h-full border-none"
             allowFullScreen
             allow="autoplay; encrypted-media; picture-in-picture"
+            // The "Magic" Ad-Blocker Shield:
+            sandbox="allow-forms allow-scripts allow-pointer-lock allow-same-origin allow-top-navigation"
           />
         ) : (
           <>
