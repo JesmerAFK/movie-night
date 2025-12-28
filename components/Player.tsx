@@ -8,13 +8,22 @@ import WatchTogether from './WatchTogether/WatchTogether';
 import SkippableAd from './SkippableAd';
 import { Movie } from '../types';
 import { BACKEND_URL, API_KEY, BASE_URL } from '../constants';
-// @ts-ignore
-import { Share } from '@capacitor/share';
-// @ts-ignore
-import { ScreenOrientation, OrientationType } from '@capacitor/screen-orientation';
-// @ts-ignore
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
 import { Capacitor } from '@capacitor/core';
+
+// Native Plugin Fallbacks
+let Share: any = null;
+let ScreenOrientation: any = null;
+let Haptics: any = null;
+let ImpactStyle: any = { Light: 'LIGHT', Medium: 'MEDIUM', Heavy: 'HEAVY' };
+
+if (Capacitor.isNativePlatform()) {
+  import('@capacitor/share').then(m => Share = m.Share).catch(() => { });
+  import('@capacitor/screen-orientation').then(m => ScreenOrientation = m.ScreenOrientation).catch(() => { });
+  import('@capacitor/haptics').then(m => {
+    Haptics = m.Haptics;
+    ImpactStyle = m.ImpactStyle;
+  }).catch(() => { });
+}
 
 interface PlayerProps {
   movie: Movie;
@@ -53,7 +62,6 @@ const Player: React.FC<PlayerProps> = ({
 
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const bufferCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const lastUrlRef = useRef<string>('');
 
   const [isSeries, setIsSeries] = useState(false);
   const [availableSeasonsData, setAvailableSeasonsData] = useState<{ season: number, episodes_count: number }[]>([]);
@@ -68,9 +76,9 @@ const Player: React.FC<PlayerProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
 
   const titleToSearch = movie.title || movie.name || "";
-  const year = movie.release_date ? parseInt(movie.release_date.split('-')[0]) : (movie.first_air_date ? parseInt(movie.first_air_date.split('-')[0]) : undefined);
+  const yearStr = movie.release_date?.split('-')[0] || movie.first_air_date?.split('-')[0];
+  const year = yearStr ? parseInt(yearStr) : undefined;
 
-  // Buffer optimization: append native flag for backend
   const currentUrl = `${BACKEND_URL}/api/stream?title=${encodeURIComponent(titleToSearch)}${selectedQuality ? `&quality=${selectedQuality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=${!useEmbed}${isSeries ? '&is_tv=true' : ''}&native=${Capacitor.isNativePlatform()}`;
 
   const embedUrl = isSeries
@@ -81,25 +89,21 @@ const Player: React.FC<PlayerProps> = ({
   const episodesCount = currentSeasonData ? currentSeasonData.episodes_count : 1;
   const episodeList = Array.from({ length: episodesCount }, (_, i) => i + 1);
 
-  // Watch for stuck loading
+  // Buffer Timeout Logic
   useEffect(() => {
     if (loading && !showAd && !useEmbed) {
       if (bufferCheckTimeoutRef.current) clearTimeout(bufferCheckTimeoutRef.current);
       bufferCheckTimeoutRef.current = setTimeout(() => {
-        if (loading) {
-          setErrorType('network'); // Trigger "Switch to Embed" after 15s of no progress
-        }
-      }, 15000);
+        if (loading) setErrorType('network');
+      }, 12000);
     }
-    return () => {
-      if (bufferCheckTimeoutRef.current) clearTimeout(bufferCheckTimeoutRef.current);
-    };
+    return () => { if (bufferCheckTimeoutRef.current) clearTimeout(bufferCheckTimeoutRef.current); };
   }, [loading, showAd, useEmbed]);
 
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
-      if (Capacitor.isNativePlatform()) {
+      if (Capacitor.isNativePlatform() && ScreenOrientation) {
         try { ScreenOrientation.unlock(); } catch (e) { }
       }
     };
@@ -113,32 +117,31 @@ const Player: React.FC<PlayerProps> = ({
     }, 3000);
   };
 
-  const triggerHaptic = (style: ImpactStyle = ImpactStyle.Light) => {
-    if (Capacitor.isNativePlatform()) {
+  const triggerHaptic = (style: string = 'LIGHT') => {
+    if (Capacitor.isNativePlatform() && Haptics) {
       try { Haptics.impact({ style }); } catch (e) { }
     }
   };
 
   const toggleFullscreen = async () => {
-    triggerHaptic(ImpactStyle.Medium);
+    triggerHaptic('MEDIUM');
     if (!containerRef.current) return;
 
     if (!document.fullscreenElement) {
       try {
         await containerRef.current.requestFullscreen();
         setIsLandscape(true);
-        if (Capacitor.isNativePlatform()) {
-          // @ts-ignore
+        if (Capacitor.isNativePlatform() && ScreenOrientation) {
           await ScreenOrientation.lock({ orientation: 'landscape' });
         }
       } catch (err) {
-        console.error("Fullscreen/Rotation Error:", err);
+        console.error("Fullscreen Error:", err);
       }
     } else {
       try {
         if (document.exitFullscreen) await document.exitFullscreen();
         setIsLandscape(false);
-        if (Capacitor.isNativePlatform()) {
+        if (Capacitor.isNativePlatform() && ScreenOrientation) {
           try { await ScreenOrientation.unlock(); } catch (e) { }
         }
       } catch (err) {
@@ -148,50 +151,34 @@ const Player: React.FC<PlayerProps> = ({
   };
 
   const handleShare = async () => {
-    triggerHaptic(ImpactStyle.Heavy);
+    triggerHaptic('HEAVY');
     const url = window.location.href;
     try {
-      if (Capacitor.isNativePlatform()) {
+      if (Capacitor.isNativePlatform() && Share) {
         await Share.share({
           title: movie.title || movie.name,
           text: `Watching ${movie.title || movie.name} on Movie Night!`,
           url: url,
-          dialogTitle: 'Share Movie',
         });
+      } else if (navigator.share) {
+        await navigator.share({ title: movie.title || movie.name, url: url });
       } else {
-        if (navigator.share) {
-          await navigator.share({
-            title: movie.title || movie.name,
-            url: url
-          });
-        } else {
-          navigator.clipboard.writeText(url);
-          alert("Link copied to clipboard!");
-        }
+        navigator.clipboard.writeText(url);
+        alert("Link copied!");
       }
-    } catch (err) {
-      console.log("Share skipped or failed");
-    }
-  };
-
-  const handleToggleListWithHaptic = () => {
-    triggerHaptic(ImpactStyle.Medium);
-    onToggleList();
+    } catch (err) { console.log("Share failed"); }
   };
 
   const togglePlay = () => {
     if (!videoRef.current) return;
-    triggerHaptic(ImpactStyle.Light);
-    if (videoRef.current.paused) {
-      videoRef.current.play().catch(() => { });
-    } else {
-      videoRef.current.pause();
-    }
+    triggerHaptic('LIGHT');
+    if (videoRef.current.paused) videoRef.current.play().catch(() => { });
+    else videoRef.current.pause();
   };
 
   const skip = (amount: number) => {
     if (!videoRef.current) return;
-    triggerHaptic(ImpactStyle.Light);
+    triggerHaptic('LIGHT');
     videoRef.current.currentTime += amount;
   };
 
@@ -221,12 +208,10 @@ const Player: React.FC<PlayerProps> = ({
     const fetchSimilar = async () => {
       try {
         const type = movie.first_air_date ? 'tv' : 'movie';
-        const response = await fetch(`${BASE_URL}/${type}/${movie.id}/similar?api_key=${API_KEY}&language=en-US`);
+        const response = await fetch(`${BASE_URL}/${type}/${movie.id}/similar?api_key=${API_KEY}`);
         const data = await response.json();
         if (data.results) setSimilarMovies(data.results.slice(0, 8));
-      } catch (err) {
-        console.error("Similar fetch error:", err);
-      }
+      } catch (err) { console.error("Similar fetch error:", err); }
     };
     fetchSimilar();
   }, [movie.id]);
@@ -271,7 +256,7 @@ const Player: React.FC<PlayerProps> = ({
   }, [currentUrl, selectedQuality, showAd, useEmbed]);
 
   const renderVideoPlayer = () => (
-    <div className="relative w-full aspect-video md:h-full bg-black flex items-center justify-center group overflow-hidden" onClick={() => !useEmbed && togglePlay()}>
+    <div className={`relative w-full overflow-hidden bg-black flex items-center justify-center group ${isLandscape ? 'h-full aspect-video' : 'aspect-video'}`} onClick={() => !useEmbed && togglePlay()}>
       {useEmbed ? (
         <iframe src={embedUrl} className="w-full h-full border-none" allowFullScreen allow="autoplay; encrypted-media; picture-in-picture" />
       ) : (
@@ -293,19 +278,18 @@ const Player: React.FC<PlayerProps> = ({
           </video>
 
           {loading && !errorType && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 z-20">
-              <div className="relative w-12 h-12">
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/80 z-20">
+              <div className="relative w-10 h-10">
                 <div className="absolute inset-0 rounded-full border-4 border-white/10" />
                 <div className="absolute inset-0 rounded-full border-4 border-t-[#e50914] animate-spin" />
               </div>
-              <p className="text-white font-black text-[9px] uppercase tracking-[0.4em] mt-6">Optimizing Stream...</p>
-              <p className="text-gray-500 text-[8px] uppercase mt-1">Wait for best quality</p>
+              <p className="text-white font-black text-[8px] uppercase tracking-[0.4em] mt-5">Loading Stream</p>
             </div>
           )}
 
           <div className={`absolute inset-0 z-30 flex flex-col justify-between transition-opacity duration-300 ${showControls || !isPlaying ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
             <div className="p-4 flex items-center justify-between bg-gradient-to-b from-black/95 to-transparent pt-[env(safe-area-inset-top)]">
-              <button onClick={(e) => { e.stopPropagation(); onBack(); }} className="p-2 bg-black/40 rounded-full">
+              <button onClick={(e) => { e.stopPropagation(); onBack(); }} className="p-2 bg-black/40 rounded-full active:scale-90 transition-transform">
                 <ArrowLeft className="text-white w-5 h-5" />
               </button>
               <div className="flex items-center space-x-3">
@@ -347,7 +331,6 @@ const Player: React.FC<PlayerProps> = ({
                 <div className="relative h-1 w-full bg-white/10 rounded-full group">
                   <div className="absolute h-full bg-[#e50914] z-10 rounded-full" style={{ width: `${(currentTime / duration) * 100}%` }} />
                   <input type="range" min={0} max={duration || 0} step={0.1} value={currentTime} onChange={(e) => { e.stopPropagation(); handleSeek(e); }} onClick={(e) => e.stopPropagation()} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-20" />
-                  <div className="absolute top-1/2 -translate-y-1/2 w-3 h-3 bg-white rounded-full z-15 shadow-lg border-2 border-[#e50914] scale-0 group-hover:scale-100 transition-transform" style={{ left: `${(currentTime / duration) * 100}%` }} />
                 </div>
                 <div className="pt-1 flex items-center justify-between">
                   <div className="flex items-center space-x-6">
@@ -368,13 +351,12 @@ const Player: React.FC<PlayerProps> = ({
           </div>
 
           {errorType && (
-            <div className="absolute inset-0 bg-black/95 flex flex-col items-center justify-center p-8 text-center z-50 animate-in fade-in duration-500">
-              <AlertCircle className="w-12 h-12 text-[#e50914] mb-6" />
-              <h3 className="text-white font-black text-2xl mb-2">Network Timeout</h3>
-              <p className="text-gray-500 text-xs mb-8 max-w-[200px]">The direct server is struggling to reach your device. Try the Embed server.</p>
-              <div className="flex flex-col gap-3 w-full max-w-[240px]">
-                <button onClick={() => setUseEmbed(true)} className="w-full py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl">Use Embed Server</button>
-                <button onClick={() => window.location.reload()} className="w-full py-4 bg-white/5 text-white font-bold rounded-2xl text-[10px] uppercase border border-white/5">Retry Source</button>
+            <div className="absolute inset-0 bg-black/98 flex flex-col items-center justify-center p-8 text-center z-[60] animate-in fade-in duration-500">
+              <AlertCircle className="w-8 h-8 text-[#e50914] mb-4" />
+              <h3 className="text-white font-black text-lg mb-1 uppercase">Source Busy</h3>
+              <div className="flex flex-col gap-3 w-full max-w-[200px]">
+                <button onClick={() => { triggerHaptic('MEDIUM'); setUseEmbed(true); setErrorType(null); }} className="w-full py-4 bg-white text-black font-black rounded-2xl text-[10px] uppercase tracking-widest shadow-xl active:scale-95 transition-all">Use Fallback Server</button>
+                <button onClick={() => window.location.reload()} className="w-full py-2 text-white/40 font-bold text-[8px] uppercase active:scale-95 transition-all">Retry Direct</button>
               </div>
             </div>
           )}
@@ -391,88 +373,73 @@ const Player: React.FC<PlayerProps> = ({
   if (showAd) return <SkippableAd onSkip={() => { setShowAd(false); setIsPlaying(true); }} />;
 
   return (
-    <div onMouseMove={handleMouseMove} ref={containerRef} className={`fixed inset-0 z-50 bg-[#0f0f0f] overflow-hidden flex flex-col select-none ${isLandscape ? 'md:flex-row' : 'flex-col'}`}>
+    <div onMouseMove={handleMouseMove} ref={containerRef} className={`fixed inset-0 z-50 bg-[#070707] overflow-hidden flex flex-col select-none ${isLandscape ? 'md:flex-row' : 'flex-col'}`}>
 
-      <div className={`relative transition-all duration-500 ${isLandscape ? 'w-full h-full' : 'w-full h-fit mr-0 shadow-[0_20px_50px_rgba(0,0,0,1)]'}`}>
+      <div className={`relative transition-all duration-500 ${isLandscape ? 'w-full h-full' : 'w-full h-fit flex-shrink-0'}`}>
         {renderVideoPlayer()}
       </div>
 
       {!isLandscape && (
-        <div className="flex-1 overflow-y-auto no-scrollbar bg-[#0f0f0f] px-6 py-8 pb-40">
+        <div className="flex-1 overflow-y-auto no-scrollbar bg-[#070707] px-6 py-8 pb-40">
           <div className="flex items-start justify-between mb-2">
-            <h1 className="text-2xl font-black text-white pr-4 leading-tight">{movie.title || movie.name}</h1>
+            <h1 className="text-xl font-black text-white pr-4 leading-tight uppercase tracking-tight">{movie.title || movie.name}</h1>
             <div className="flex items-center space-x-1.5 bg-[#e50914]/10 border border-[#e50914]/20 px-2 py-1 rounded-lg">
-              <Star className="w-4 h-4 text-[#e50914] fill-current" />
-              <span className="font-black text-[#e50914] text-sm">{movie.vote_average?.toFixed(1) || '8.2'}</span>
+              <Star className="w-3 h-3 text-[#e50914] fill-current" />
+              <span className="font-black text-[#e50914] text-xs">{movie.vote_average?.toFixed(1) || '8.2'}</span>
             </div>
           </div>
 
-          <div className="flex items-center space-x-2 mb-10 text-[10px] font-black uppercase text-gray-600 tracking-[0.2em]">
-            <div className="bg-white/5 px-2 py-0.5 rounded-sm">{movie.release_date?.split('-')[0] || movie.first_air_date?.split('-')[0] || '2025'}</div>
+          <div className="flex items-center space-x-2 mb-10 text-[9px] font-black uppercase text-gray-700 tracking-[0.2em]">
+            <div className="bg-white/5 px-2 py-0.5 rounded-sm">{year || '2025'}</div>
             <div className="bg-white/5 px-2 py-0.5 rounded-sm">{movie.original_language || 'EN'}</div>
-            <div className="text-[#e50914]">DOLBY ATMOS</div>
+            <div className="text-[#e50914]/50">ULTRA HD</div>
           </div>
 
           <div className="grid grid-cols-3 gap-6 mb-12">
-            <button onClick={handleShare} className="flex flex-col items-center space-y-2 group active:scale-95 transition-all">
-              <div className="w-[4.5rem] h-16 bg-white/[0.03] rounded-3xl flex items-center justify-center border border-white/5 group-hover:bg-white/5 group-hover:border-white/10">
-                <Share2 className="w-6 h-6 text-gray-300" />
+            <button onClick={handleShare} className="flex flex-col items-center space-y-2 active:scale-90 transition-all">
+              <div className="w-14 h-14 bg-white/[0.03] rounded-2xl flex items-center justify-center border border-white/5">
+                <Share2 className="w-5 h-5 text-gray-400" />
               </div>
-              <span className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">Share</span>
+              <span className="text-[9px] text-gray-600 font-bold uppercase tracking-widest">Share</span>
             </button>
-            <button onClick={handleToggleListWithHaptic} className="flex flex-col items-center space-y-2 group active:scale-95 transition-all">
-              <div className={`w-[4.5rem] h-16 rounded-3xl flex items-center justify-center border border-white/5 transition-all duration-300 ${isAddedToList ? 'bg-[#e50914] border-[#e50914] shadow-[0_10px_20px_rgba(229,9,20,0.3)]' : 'bg-white/[0.03] group-hover:bg-white/5'}`}>
-                {isAddedToList ? <Check className="w-6 h-6 text-white" /> : <Plus className="w-6 h-6 text-gray-300" />}
+            <button onClick={onToggleList} className="flex flex-col items-center space-y-2 active:scale-90 transition-all">
+              <div className={`w-14 h-14 rounded-2xl flex items-center justify-center border transition-all duration-300 ${isAddedToList ? 'bg-[#e50914] border-[#e50914]' : 'bg-white/[0.03] border-white/5'}`}>
+                {isAddedToList ? <Check className="w-5 h-5 text-white" /> : <Plus className="w-5 h-5 text-gray-400" />}
               </div>
-              <span className={`text-[10px] font-bold uppercase tracking-widest ${isAddedToList ? 'text-[#e50914]' : 'text-gray-500'}`}>{isAddedToList ? 'Added' : 'Save'}</span>
+              <span className={`text-[9px] font-bold uppercase tracking-widest ${isAddedToList ? 'text-[#e50914]' : 'text-gray-600'}`}>{isAddedToList ? 'Added' : 'Save'}</span>
             </button>
-            <button onClick={() => { triggerHaptic(ImpactStyle.Light); setShowSpecs(!showSpecs); }} className="flex flex-col items-center space-y-2 group active:scale-95 transition-all">
-              <div className={`w-[4.5rem] h-16 bg-white/[0.03] rounded-3xl flex items-center justify-center border border-white/5 transition-all ${showSpecs ? 'border-blue-500/50 bg-blue-500/10' : ''}`}>
-                <Settings2 className={`w-6 h-6 transition-colors ${showSpecs ? 'text-blue-500' : 'text-gray-300'}`} />
+            <button onClick={() => { triggerHaptic('LIGHT'); setShowSpecs(!showSpecs); }} className="flex flex-col items-center space-y-2 active:scale-90 transition-all">
+              <div className={`w-14 h-14 bg-white/[0.03] rounded-2xl flex items-center justify-center border ${showSpecs ? 'border-[#e50914]/40 bg-[#e50914]/5' : 'border-white/5'}`}>
+                <Settings2 className={`w-5 h-5 ${showSpecs ? 'text-[#e50914]' : 'text-gray-400'}`} />
               </div>
-              <span className={`text-[10px] font-bold uppercase tracking-widest ${showSpecs ? 'text-blue-500' : 'text-gray-500'}`}>Specs</span>
+              <span className={`text-[9px] font-bold uppercase tracking-widest ${showSpecs ? 'text-[#e50914]' : 'text-gray-600'}`}>Specs</span>
             </button>
           </div>
 
           {showSpecs && (
-            <div className="mb-10 p-6 bg-blue-500/5 border border-blue-500/20 rounded-3xl animate-in slide-in-from-top-2 duration-300">
-              <div className="grid grid-cols-2 gap-y-4 gap-x-8 text-[10px] font-black uppercase tracking-widest">
-                <div>
-                  <p className="text-blue-500/50 mb-1">Server</p>
-                  <p className="text-white">{useEmbed ? 'Vidsrc Embed' : 'Railway Direct'}</p>
-                </div>
-                <div>
-                  <p className="text-blue-500/50 mb-1">Quality</p>
-                  <p className="text-white">{selectedQuality || 'Auto (HD)'}</p>
-                </div>
-                <div>
-                  <p className="text-blue-500/50 mb-1">Platform</p>
-                  <p className="text-white">{Capacitor.isNativePlatform() ? 'Native Android' : 'Web Player'}</p>
-                </div>
-                <div>
-                  <p className="text-blue-500/50 mb-1">Status</p>
-                  <p className="text-green-500">Connected</p>
-                </div>
+            <div className="mb-10 p-5 bg-white/[0.02] border border-white/5 rounded-2xl animate-in slide-in-from-top-1 duration-300">
+              <div className="grid grid-cols-2 gap-4 text-[9px] font-black uppercase tracking-widest">
+                <div><p className="text-gray-700 mb-1">Server</p><p className="text-white">{useEmbed ? 'EMBED' : 'DIRECT'}</p></div>
+                <div><p className="text-gray-700 mb-1">Quality</p><p className="text-white">{selectedQuality || '720P'}</p></div>
+                <div><p className="text-gray-700 mb-1">Status</p><p className="text-green-500">Live</p></div>
               </div>
             </div>
           )}
 
           <div className="mb-10">
-            <h3 className="text-white font-black text-[10px] uppercase tracking-[0.4em] mb-4 opacity-30">Synopsis</h3>
-            <p className="text-gray-400 text-sm leading-relaxed font-medium">
-              {movie.overview || "No overview available for this title."}
-            </p>
+            <h3 className="text-white font-black text-[9px] uppercase tracking-[0.4em] mb-4 opacity-20">Synopsis</h3>
+            <p className="text-gray-500 text-[13px] leading-relaxed font-medium">{movie.overview || "No overview available."}</p>
           </div>
 
           {isSeries && (
             <div className="mb-14">
-              <h3 className="text-white font-black text-[10px] uppercase tracking-[0.4em] mb-6 opacity-30">Selection</h3>
+              <h3 className="text-white font-black text-[9px] uppercase tracking-[0.4em] mb-5 opacity-20">Selection</h3>
               <div className="flex space-x-3 overflow-x-auto no-scrollbar -mx-6 px-6">
                 {episodeList.map(e => (
                   <button
                     key={e}
-                    onClick={() => { triggerHaptic(ImpactStyle.Light); setEpisode(e); setLoading(true); }}
-                    className={`shrink-0 w-14 h-14 flex items-center justify-center rounded-2xl font-black text-sm transition-all border-2 ${episode === e ? 'bg-[#e50914] text-white border-[#e50914] shadow-lg scale-110' : 'bg-white/5 text-gray-600 border-transparent hover:border-white/10'}`}
+                    onClick={() => { triggerHaptic('LIGHT'); setEpisode(e); setLoading(true); }}
+                    className={`shrink-0 w-12 h-12 flex items-center justify-center rounded-xl font-black text-sm transition-all ${episode === e ? 'bg-[#e50914] text-white shadow-lg scale-105' : 'bg-white/5 text-gray-700'}`}
                   >
                     {e}
                   </button>
@@ -483,16 +450,13 @@ const Player: React.FC<PlayerProps> = ({
 
           {similarMovies.length > 0 && (
             <div className="animate-in fade-in duration-1000">
-              <h3 className="text-white font-black text-[10px] uppercase tracking-[0.4em] mb-6 opacity-30 flex items-center">
-                <TrendingUpIcon className="w-3.5 h-3.5 text-[#e50914] mr-2" />
-                Recommendations
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
+              <h3 className="text-white font-black text-[9px] uppercase tracking-[0.4em] mb-6 opacity-20">You May Also Like</h3>
+              <div className="grid grid-cols-2 gap-3">
                 {similarMovies.map(similar => (
-                  <div key={similar.id} className="group relative aspect-[16/9] bg-white/5 rounded-2xl overflow-hidden active:scale-95 transition-all" onClick={() => window.location.search = `?movie=${similar.id}`}>
-                    <img src={`https://image.tmdb.org/t/p/w300${similar.backdrop_path || similar.poster_path}`} className="w-full h-full object-cover opacity-60 group-hover:opacity-100 transition-opacity" alt={similar.title} />
-                    <div className="absolute inset-x-0 bottom-0 p-4 bg-gradient-to-t from-black via-black/40 to-transparent">
-                      <p className="text-white text-[9px] font-black uppercase truncate tracking-widest">{similar.title || similar.name}</p>
+                  <div key={similar.id} className="group relative aspect-video bg-white/5 rounded-xl overflow-hidden active:scale-95 transition-all" onClick={() => window.location.search = `?movie=${similar.id}`}>
+                    <img src={`https://image.tmdb.org/t/p/w200${similar.backdrop_path || similar.poster_path}`} className="w-full h-full object-cover opacity-50 group-hover:opacity-100 transition-opacity" />
+                    <div className="absolute inset-x-0 bottom-0 p-3 bg-gradient-to-t from-black via-black/30 to-transparent">
+                      <p className="text-white text-[8px] font-black uppercase truncate tracking-widest">{similar.title || similar.name}</p>
                     </div>
                   </div>
                 ))}
@@ -510,9 +474,5 @@ const Player: React.FC<PlayerProps> = ({
     </div>
   );
 };
-
-const TrendingUpIcon = ({ className }: { className?: string }) => (
-  <svg className={className} xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 7 13.5 15.5 8.5 10.5 2 17" /><polyline points="16 7 22 7 22 13" /></svg>
-);
 
 export default Player;

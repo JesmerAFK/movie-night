@@ -136,12 +136,13 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         if not stream_url:
              raise HTTPException(status_code=404, detail="Stream not found")
 
-        # Proxy logic
+        # Enhanced Proxy Headers
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Connection': 'keep-alive',
+            'Origin': 'https://fmoviesunblocked.net'
         }
         
         range_header = request.headers.get('Range')
@@ -149,21 +150,23 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         if range_header:
             proxy_headers['Range'] = range_header
                   
-        client = httpx.AsyncClient(timeout=60.0, follow_redirects=True, limits=httpx.Limits(max_connections=100))
+        # Use a longer timeout and better connection limits for Railway
+        client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))
         
         async def stream_generator():
             try:
-                # Use a smaller pool and streaming to avoid memory overhead
-                async with client.stream("GET", stream_url, headers=proxy_headers, timeout=60.0) as r:
-                    # Capture vital headers before starting iteration
+                async with client.stream("GET", stream_url, headers=proxy_headers) as r:
                     h = r.headers
                     status = r.status_code
+                    
+                    # Essential headers for native players to start buffering
                     msg = {
                         "status": status,
                         "headers": {
                             "Content-Type": h.get("Content-Type", "video/mp4"),
                             "Accept-Ranges": "bytes",
                             "Access-Control-Allow-Origin": "*",
+                            "Cache-Control": "public, max-age=3600"
                         }
                     }
                     if "Content-Length" in h: msg["headers"]["Content-Length"] = h["Content-Length"]
@@ -171,11 +174,11 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                     
                     yield msg
                     
-                    # Yield chunks as they arrive
-                    async for chunk in r.aiter_bytes(chunk_size=16384): # 16KB chunks for smoother flow
+                    # Larger chunks (64KB) for better throughput on Railway
+                    async for chunk in r.aiter_bytes(chunk_size=65536): 
                         yield chunk
             except Exception as e:
-                print(f"Streaming error: {e}")
+                print(f"DEBUG: Streaming Exception: {e}")
             finally:
                 await client.aclose()
 
