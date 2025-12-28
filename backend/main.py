@@ -38,22 +38,22 @@ async def get_meta(title: str, year: int = None):
         return {}
 
 @app.get("/api/qualities")
-async def get_qualities(title: str, year: int = None, season: int = 1, episode: int = 1):
+async def get_qualities(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
     if not title:
         return []
     try:
         from api_service import get_available_qualities
-        qualities = await get_available_qualities(title, year=year, season=season, episode=episode)
+        qualities = await get_available_qualities(title, year=year, season=season, episode=episode, is_tv=is_tv)
         return qualities
     except:
         return []
 
 @app.get("/api/subtitles")
-async def get_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1):
+async def get_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
     if not title:
         return []
     try:
-        subs = await get_available_subtitles(title, year=year, season=season, episode=episode)
+        subs = await get_available_subtitles(title, year=year, season=season, episode=episode, is_tv=is_tv)
         return subs
     except Exception as e:
         print(f"Subtitle error: {e}")
@@ -126,13 +126,13 @@ async def proxy_subtitle(url: str):
         raise HTTPException(status_code=500)
 
 @app.get("/api/stream")
-async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True):
+async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True, is_tv: bool = None):
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
     try:
         from api_service import get_stream_url
-        stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode)
+        stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode, is_tv=is_tv)
         if not stream_url:
              raise HTTPException(status_code=404, detail="Stream not found")
 

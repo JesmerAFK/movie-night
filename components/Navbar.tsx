@@ -11,8 +11,21 @@ const Navbar: React.FC<NavbarProps> = ({ onSearch, activeCategory, setActiveCate
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
+  const [clickCount, setClickCount] = useState(0);
+  const isVIP = localStorage.getItem('jmafk_vip') === 'true';
 
-  const menuItems = ['Home', 'TV Shows', 'Movies', 'New & Popular', 'My List'];
+  const menuItems = ['Home', 'TV Shows', 'Movies', 'Cartoons', 'My List'];
+
+  const handleLogoClick = () => {
+    const newCount = clickCount + 1;
+    setClickCount(newCount);
+    if (newCount === 7) {
+      const current = localStorage.getItem('jmafk_vip') === 'true';
+      localStorage.setItem('jmafk_vip', (!current).toString());
+      alert(current ? 'VIP Mode Disabled 🔴' : 'VIP Mode Enabled! 🟢 (No Ads)');
+      window.location.reload();
+    }
+  };
 
   useEffect(() => {
     const handleScroll = () => {
@@ -38,8 +51,12 @@ const Navbar: React.FC<NavbarProps> = ({ onSearch, activeCategory, setActiveCate
       <div className="flex items-center justify-between px-4 md:px-12 py-4">
         <div className="flex items-center space-x-8">
           {/* Logo */}
-          <div className="text-red-600 font-bold text-2xl md:text-3xl tracking-tighter cursor-pointer" onClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}>
+          <div
+            className="text-red-600 text-2xl md:text-3xl font-extrabold cursor-pointer tracking-tighter select-none flex items-center gap-2"
+            onClick={handleLogoClick}
+          >
             JMAFK
+            {isVIP && <span className="text-[10px] bg-yellow-500 text-black px-1.5 py-0.5 rounded-full font-bold shadow-glow">VIP</span>}
           </div>
 
           {/* Desktop Menu */}

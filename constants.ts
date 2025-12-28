@@ -3,7 +3,7 @@ export const BASE_URL = "https://api.themoviedb.org/3";
 export const IMAGE_BASE_URL = "https://image.tmdb.org/t/p/original";
 export const POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500";
 
-// IMPORTANT: Replace this with your actual deployed backend URL (e.g. https://my-app.railway.app)
-// For local development, we dynamically use the current hostname (localhost or IP)
-// Use your live Railway backend URL
-export const BACKEND_URL = "https://web-production-d008.up.railway.app";
+// For local development, use localhost, otherwise use the production backend
+export const BACKEND_URL = typeof window !== 'undefined' && (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? "http://localhost:8000"
+    : "https://movie-night-production-51e0.up.railway.app";

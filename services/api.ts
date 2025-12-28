@@ -6,12 +6,12 @@ const fetchFromTMDB = async (endpoint: string): Promise<Movie[]> => {
     // Determine correctly if we need '?' or '&' to append parameters
     const separator = endpoint.includes('?') ? '&' : '?';
     const response = await fetch(`${BASE_URL}/${endpoint}${separator}api_key=${API_KEY}&language=en-US`);
-    
+
     if (!response.ok) {
       console.warn(`TMDB API Error: ${response.status} for ${endpoint}`);
       return [];
     }
-    
+
     const data: TMDBResponse = await response.json();
     return data.results || [];
   } catch (error) {
@@ -28,13 +28,26 @@ export const requests = {
   fetchHorrorMovies: () => fetchFromTMDB(`discover/movie?with_genres=27`),
   fetchRomanceMovies: () => fetchFromTMDB(`discover/movie?with_genres=10749`),
   fetchDocumentaries: () => fetchFromTMDB(`discover/movie?with_genres=99`),
+  fetchSciFi: () => fetchFromTMDB(`discover/movie?with_genres=878`),
+  fetchAnimation: () => fetchFromTMDB(`discover/movie?with_genres=16`),
+  fetchMystery: () => fetchFromTMDB(`discover/movie?with_genres=9648`),
+  fetchTVShows: () => fetchFromTMDB(`tv/popular`),
+  fetchFamily: () => fetchFromTMDB(`discover/movie?with_genres=10751`),
   searchMovies: async (query: string): Promise<Movie[]> => {
     if (!query) return [];
     try {
-      const response = await fetch(`${BASE_URL}/search/movie?api_key=${API_KEY}&language=en-US&query=${encodeURIComponent(query)}&page=1&include_adult=false`);
-      if (!response.ok) return [];
-      const data: TMDBResponse = await response.json();
-      return data.results || [];
+      // Search for both movies and TV shows
+      const [movieRes, tvRes] = await Promise.all([
+        fetch(`${BASE_URL}/search/movie?api_key=${API_KEY}&language=en-US&query=${encodeURIComponent(query)}&page=1&include_adult=false`),
+        fetch(`${BASE_URL}/search/tv?api_key=${API_KEY}&language=en-US&query=${encodeURIComponent(query)}&page=1&include_adult=false`)
+      ]);
+
+      const movieData = await movieRes.json();
+      const tvData = await tvRes.json();
+
+      const results = [...(movieData.results || []), ...(tvData.results || [])];
+      // Sort by popularity
+      return results.sort((a, b) => (b.popularity || 0) - (a.popularity || 0));
     } catch (error) {
       console.error("Search failed:", error);
       return [];

@@ -8,93 +8,123 @@ import random
 import re
 
 # Helper to fetch and parse files with smart matching
-async def get_movie_files(title: str, year: int = None, season: int = 1, episode: int = 1):
+async def get_movie_files(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
     # Try different mirrors if one is blocked
     mirrors = list(MIRROR_HOSTS)
-    # Remove the one we know is blocked on Render if it's there
     if 'h5.aoneroom.com' in mirrors:
         mirrors.remove('h5.aoneroom.com')
     
     random.shuffle(mirrors)
-    # Put some known good ones first if they exist
     prime_mirrors = ['moviebox.ph', 'netnaija.video', 'mbbox.video']
     mirrors = [m for m in prime_mirrors if m in mirrors] + [m for m in mirrors if m not in prime_mirrors]
 
     for mirror in mirrors[:4]:
         try:
-            # Force the library to use this mirror
             moviebox_api.SELECTED_HOST = mirror
             moviebox_api.HOST_URL = f"https://{mirror}"
             
-            print(f"DEBUG: Attempting MIRROR: {mirror} for '{title}'...")
+            print(f"DEBUG: Attempting MIRROR: {mirror} for '{title}' (TV: {is_tv})...")
             
             session = Session()
             items = []
-            search_queries = [title]
             
-            clean_title = "".join(c for c in title if c.isalnum() or c.isspace())
-            if clean_title != title:
+            # Clean title for better search
+            clean_title = "".join(c for c in title if c.isalnum() or c.isspace()).strip()
+            search_queries = [title]
+            if clean_title and clean_title != title:
                 search_queries.append(clean_title)
 
             for query in search_queries:
-                try:
-                    search_movie = Search(session=session, query=query, subject_type=SubjectType.MOVIES)
-                    res = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
-                    found = res.get('items', [])
-                    if found:
-                        items.extend(found)
-                        break
-                except: pass
+                # If we know it's a TV show, search TV first
+                if is_tv is True:
+                    try:
+                        search_tv = Search(session=session, query=query, subject_type=SubjectType.TV_SERIES)
+                        res = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
+                        items.extend(res.get('items', []))
+                    except: pass
                 
-                try:
-                    search_tv = Search(session=session, query=query, subject_type=SubjectType.TV_SERIES)
-                    res = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
-                    found = res.get('items', [])
-                    if found:
-                        items.extend(found)
-                        break
-                except: pass
+                # If we know it's a Movie, search Movies first
+                if is_tv is False:
+                    try:
+                        search_movie = Search(session=session, query=query, subject_type=SubjectType.MOVIES)
+                        res = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
+                        items.extend(res.get('items', []))
+                    except: pass
+
+                # Fallback to searching both if not specified or nothing found
+                if not items:
+                    try:
+                        search_movie = Search(session=session, query=query, subject_type=SubjectType.MOVIES)
+                        res = await asyncio.wait_for(search_movie.get_content(), timeout=10.0)
+                        items.extend(res.get('items', []))
+                    except: pass
+                    
+                    try:
+                        search_tv = Search(session=session, query=query, subject_type=SubjectType.TV_SERIES)
+                        res = await asyncio.wait_for(search_tv.get_content(), timeout=10.0)
+                        items.extend(res.get('items', []))
+                    except: pass
+                
+                if items: break
 
             if not items:
-                print(f"DEBUG: No results on mirror {mirror}, trying next...")
+                print(f"DEBUG: No results on mirror {mirror}")
                 continue
 
-            # Smart Matching
+            # Smart Matching with TV vs Movie priority
             cleaned_query = title.lower().strip()
             candidates = []
             for item in items:
                 i_title = item.get('title', '').strip()
+                i_type = item.get('subjectType')
                 i_year = item.get('year') 
                 try: i_year = int(i_year) 
                 except: i_year = None
                 
                 score = 0
                 clean_i_title = i_title.lower()
+                
+                # Title Match Score
                 ratio = difflib.SequenceMatcher(None, cleaned_query, clean_i_title).ratio()
                 if ratio < 0.4: continue
                 score += ratio * 100
+                
                 if cleaned_query == clean_i_title: score += 50
                 
-                query_digits = set(re.findall(r'\d+', cleaned_query))
-                item_digits = set(re.findall(r'\d+', clean_i_title))
-                if query_digits and not query_digits.issubset(item_digits):
-                     score -= 100
+                # Type Match Priority
+                if is_tv is not None:
+                    if (is_tv and i_type == SubjectType.TV_SERIES) or (not is_tv and i_type == SubjectType.MOVIES):
+                        score += 50
+                    else:
+                        score -= 50 # Penalize wrong type
+
+                # Year Match
                 if year and i_year:
                     diff = abs(i_year - year)
                     if diff == 0: score += 50
-                    elif diff <= 1: score += 25
-                    elif diff > 3: score -= 100
+                    elif diff <= 1: score += 20
+                    elif diff > 5: score -= 100
+                
+                # Digit check (e.g. "Spider-Man 2" should not match "Spider-Man 3")
+                query_digits = re.findall(r'\d+', cleaned_query)
+                item_digits = re.findall(r'\d+', clean_i_title)
+                if query_digits and item_digits:
+                    if set(query_digits) != set(item_digits):
+                        score -= 60
+
                 candidates.append((score, item))
                 
             candidates.sort(key=lambda x: x[0], reverse=True)
-            if not candidates or candidates[0][0] < 40:
+            if not candidates or candidates[0][0] < 45:
                 continue
 
             target_item_dict = candidates[0][1]
             target_item = SearchResultsItem(**target_item_dict)
-            is_tv = target_item.subjectType == SubjectType.TV_SERIES
+            final_is_tv = target_item.subjectType == SubjectType.TV_SERIES
 
-            if is_tv:
+            print(f"DEBUG: Selected '{target_item.title}' (Type: {target_item.subjectType}) Score: {candidates[0][0]}")
+
+            if final_is_tv:
                 dmfd = DownloadableTVSeriesFilesDetail(session, target_item)
                 files_container = await asyncio.wait_for(dmfd.get_content(season=season, episode=episode), timeout=15.0)
             else:
@@ -112,14 +142,12 @@ async def get_movie_files(title: str, year: int = None, season: int = 1, episode
                 subtitles = files_container.captions
             elif isinstance(files_container, dict) and 'captions' in files_container:
                 subtitles = files_container['captions']
-            elif isinstance(files_container, dict) and 'subtitles' in files_container:
-                 subtitles = files_container['subtitles']
                 
             if downloads:
-                print(f"DEBUG: SUCCESS on mirror {mirror}!")
+                print(f"DEBUG: SUCCESS on mirror {mirror} with {len(downloads)} links")
                 return downloads, subtitles
             else:
-                print(f"DEBUG: Mirror {mirror} returned no links.")
+                print(f"DEBUG: Mirror {mirror} returned no links for {target_item.title}")
 
         except Exception as e:
             print(f"DEBUG: Mirror {mirror} error: {e}")
@@ -220,8 +248,8 @@ async def get_media_metadata(title: str, year: int = None):
     except:
         return None
 
-async def get_available_qualities(title: str, year: int = None, season: int = 1, episode: int = 1):
-    downloads, _ = await get_movie_files(title, year, season, episode)
+async def get_available_qualities(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
+    downloads, _ = await get_movie_files(title, year, season, episode, is_tv=is_tv)
     if not downloads:
         return []
     
@@ -260,8 +288,8 @@ async def get_available_qualities_with_urls(title: str, year: int = None, season
             })
     return results
 
-async def get_available_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1):
-    _, subtitles = await get_movie_files(title, year, season, episode)
+async def get_available_subtitles(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
+    _, subtitles = await get_movie_files(title, year, season, episode, is_tv=is_tv)
     if not subtitles: return []
         
     LANG_MAP = {
@@ -285,8 +313,8 @@ async def get_available_subtitles(title: str, year: int = None, season: int = 1,
         if url: results.append({'language': display_lang, 'url': url})
     return results
 
-async def get_stream_url(title: str, quality: str = None, year: int = None, season: int = 1, episode: int = 1) -> str | None:
-    downloads, _ = await get_movie_files(title, year, season, episode)
+async def get_stream_url(title: str, quality: str = None, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None) -> str | None:
+    downloads, _ = await get_movie_files(title, year, season, episode, is_tv=is_tv)
     if not downloads: return None
     best_url = None
     best_resolution_score = -1

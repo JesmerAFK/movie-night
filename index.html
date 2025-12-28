@@ -5,6 +5,24 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Movie Night by JMAFK</title>
+
+  <!-- VIP Ad Script Controller -->
+  <script>
+    (function () {
+      const isVIP = localStorage.getItem('jmafk_vip') === 'true';
+      if (!isVIP) {
+        // Social Bar / Popunder
+        const s1 = document.createElement('script');
+        s1.src = "https://pl28348626.effectivegatecpm.com/9e/eb/4b/9eeb4b1727575879fd5b73cc0b5f94ad.js";
+        document.head.appendChild(s1);
+
+        // Additional Ad Logic
+        const s2 = document.createElement('script');
+        s2.src = "https://pl28348630.effectivegatecpm.com/b1/ed/f0/b1edf07e2224b56e2624b42826136b13.js";
+        document.head.appendChild(s2);
+      }
+    })();
+  </script>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
   <script src="https://cdn.tailwindcss.com"></script>
   <script>

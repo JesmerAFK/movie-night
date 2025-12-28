@@ -4,6 +4,7 @@ import Hero from './components/Hero';
 import Row from './components/Row';
 import Modal from './components/Modal';
 import Player from './components/Player';
+import AdContainer from './components/AdContainer';
 import { Movie } from './types';
 import { requests } from './services/api';
 
@@ -15,11 +16,19 @@ const App: React.FC = () => {
   const [comedy, setComedy] = useState<Movie[]>([]);
   const [horror, setHorror] = useState<Movie[]>([]);
   const [romance, setRomance] = useState<Movie[]>([]);
+  const [sciFi, setSciFi] = useState<Movie[]>([]);
+  const [animation, setAnimation] = useState<Movie[]>([]);
+  const [mystery, setMystery] = useState<Movie[]>([]);
+  const [documentaries, setDocumentaries] = useState<Movie[]>([]);
+  const [tvShows, setTVShows] = useState<Movie[]>([]);
+  const [family, setFamily] = useState<Movie[]>([]);
   const [searchResults, setSearchResults] = useState<Movie[] | null>(null);
 
   // UI State
   const [selectedMovie, setSelectedMovie] = useState<Movie | null>(null);
   const [playingMovie, setPlayingMovie] = useState<Movie | null>(null);
+  const [startSeason, setStartSeason] = useState(1);
+  const [startEpisode, setStartEpisode] = useState(1);
   const [activeCategory, setActiveCategory] = useState('Home');
   const [myList, setMyList] = useState<Movie[]>([]);
 
@@ -49,14 +58,26 @@ const App: React.FC = () => {
         actionData,
         comedyData,
         horrorData,
-        romanceData
+        romanceData,
+        sciFiData,
+        animationData,
+        mysteryData,
+        docsData,
+        tvData,
+        familyData
       ] = await Promise.all([
         requests.fetchTrending(),
         requests.fetchTopRated(),
         requests.fetchActionMovies(),
         requests.fetchComedyMovies(),
         requests.fetchHorrorMovies(),
-        requests.fetchRomanceMovies()
+        requests.fetchRomanceMovies(),
+        requests.fetchSciFi(),
+        requests.fetchAnimation(),
+        requests.fetchMystery(),
+        requests.fetchDocumentaries(),
+        requests.fetchTVShows(),
+        requests.fetchFamily()
       ]);
 
       setTrending(trendingData);
@@ -65,16 +86,32 @@ const App: React.FC = () => {
       setComedy(comedyData);
       setHorror(horrorData);
       setRomance(romanceData);
-
-      // Random featured movie
-      if (trendingData.length > 0) {
-        const random = trendingData[Math.floor(Math.random() * trendingData.length)];
-        setFeaturedMovie(random);
-      }
+      setSciFi(sciFiData);
+      setAnimation(animationData);
+      setMystery(mysteryData);
+      setDocumentaries(docsData);
+      setTVShows(tvData);
+      setFamily(familyData);
     };
 
     fetchAllData();
   }, []);
+
+  // Update featured movie when category changes or data loads
+  useEffect(() => {
+    let pool: Movie[] = trending;
+
+    if (activeCategory === 'TV Shows') pool = tvShows;
+    else if (activeCategory === 'Movies') pool = topRated;
+    else if (activeCategory === 'Cartoons') pool = animation;
+    else pool = trending;
+
+    if (pool.length > 0) {
+      // Pick a random one from the first 10 for quality/relevance
+      const subset = pool.slice(0, 10);
+      setFeaturedMovie(subset[Math.floor(Math.random() * subset.length)]);
+    }
+  }, [activeCategory, trending, tvShows, topRated, animation]);
 
   const handleSearch = async (query: string) => {
     if (query.trim().length === 0) {
@@ -89,8 +126,16 @@ const App: React.FC = () => {
     setSelectedMovie(movie);
   };
 
-  const handlePlay = (movie: Movie) => {
+  const handlePlay = (movie: Movie, season?: number, episode?: number) => {
+    // Ad Trick: Pop-under on play if not VIP
+    const isVIP = localStorage.getItem('jmafk_vip') === 'true';
+    if (!isVIP) {
+      window.open('https://www.effectivegatecpm.com/ui800ve1c?key=8d659d59e311fdf92c8e5ad584a75092', '_blank');
+    }
+
     setSelectedMovie(null); // Close modal if open
+    setStartSeason(season || 1);
+    setStartEpisode(episode || 1);
     setPlayingMovie(movie);
   };
 
@@ -111,6 +156,8 @@ const App: React.FC = () => {
       <Player
         movie={playingMovie}
         onBack={() => setPlayingMovie(null)}
+        initialSeason={startSeason}
+        initialEpisode={startEpisode}
       />
     );
   }
@@ -156,22 +203,30 @@ const App: React.FC = () => {
             onMoreInfo={handleMovieClick}
           />
 
-          <div className="-mt-10 md:-mt-32 relative z-10 pl-4 md:pl-12 space-y-8">
+          <div className="-mt-8 sm:-mt-12 md:-mt-16 relative z-10 pl-4 md:pl-12 space-y-8 pt-4 md:pt-8">
             {activeCategory === 'Home' && (
               <>
                 <Row title="Trending Now" movies={trending} onMovieClick={handleMovieClick} />
-                <Row title="Top Rated" movies={topRated} onMovieClick={handleMovieClick} isLargeRow />
+                <Row title="Top Rated" movies={topRated} onMovieClick={handleMovieClick} />
+                <Row title="TV Shows" movies={tvShows} onMovieClick={handleMovieClick} isLargeRow />
+                <AdContainer type="banner" />
                 <Row title="Action Thrillers" movies={action} onMovieClick={handleMovieClick} />
+                <Row title="Science Fiction" movies={sciFi} onMovieClick={handleMovieClick} />
                 <Row title="Comedies" movies={comedy} onMovieClick={handleMovieClick} />
+                <Row title="Animation" movies={animation} onMovieClick={handleMovieClick} />
                 <Row title="Scary Movies" movies={horror} onMovieClick={handleMovieClick} />
+                <AdContainer type="native" />
+                <Row title="Mystery" movies={mystery} onMovieClick={handleMovieClick} />
                 <Row title="Romance" movies={romance} onMovieClick={handleMovieClick} />
+                <Row title="Documentaries" movies={documentaries} onMovieClick={handleMovieClick} />
               </>
             )}
 
             {activeCategory === 'TV Shows' && (
               <>
-                <Row title="Popular TV Shows" movies={trending.filter(m => m.first_air_date)} onMovieClick={handleMovieClick} isLargeRow />
-                <Row title="Comedies" movies={comedy} onMovieClick={handleMovieClick} />
+                <Row title="Popular TV Shows" movies={tvShows} onMovieClick={handleMovieClick} isLargeRow />
+                <Row title="Trending" movies={trending.filter(m => m.first_air_date)} onMovieClick={handleMovieClick} />
+                <Row title="Mystery & Thriller" movies={mystery} onMovieClick={handleMovieClick} />
               </>
             )}
 
@@ -179,6 +234,17 @@ const App: React.FC = () => {
               <>
                 <Row title="Action Movies" movies={action} onMovieClick={handleMovieClick} isLargeRow />
                 <Row title="Top Rated Movies" movies={topRated} onMovieClick={handleMovieClick} />
+                <Row title="Sci-Fi & Fantasy" movies={sciFi} onMovieClick={handleMovieClick} />
+                <Row title="Animation" movies={animation} onMovieClick={handleMovieClick} />
+              </>
+            )}
+
+            {activeCategory === 'Cartoons' && (
+              <>
+                <Row title="Popular Animations" movies={animation} onMovieClick={handleMovieClick} isLargeRow />
+                <Row title="Family Favorites" movies={family} onMovieClick={handleMovieClick} />
+                <Row title="Trending Cartoons" movies={animation.filter(m => m.vote_average > 7)} onMovieClick={handleMovieClick} />
+                <Row title="Sci-Fi & Fantasy" movies={sciFi.filter(m => m.genre_ids?.includes(14) || m.genre_ids?.includes(16))} onMovieClick={handleMovieClick} />
               </>
             )}
 

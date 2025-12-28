@@ -10,11 +10,13 @@ import { BACKEND_URL } from '../constants';
 interface PlayerProps {
   movie: Movie;
   onBack: () => void;
+  initialSeason?: number;
+  initialEpisode?: number;
 }
 
 // Configuration removed - we now play directly from URLs provided by the backend
 
-const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
+const Player: React.FC<PlayerProps> = ({ movie, onBack, initialSeason = 1, initialEpisode = 1 }) => {
   const [loading, setLoading] = useState(true);
   const [useEmbed, setUseEmbed] = useState(false); // Toggle between Brain and Global Embed
   const [errorType, setErrorType] = useState<'network' | 'format' | null>(null);
@@ -42,8 +44,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   // Series State
   const [isSeries, setIsSeries] = useState(false);
   const [availableSeasonsData, setAvailableSeasonsData] = useState<{ season: number, episodes_count: number }[]>([]);
-  const [season, setSeason] = useState(1);
-  const [episode, setEpisode] = useState(1);
+  const [season, setSeason] = useState(initialSeason);
+  const [episode, setEpisode] = useState(initialEpisode);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -51,7 +53,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
   const titleToSearch = movie.title || movie.name || "";
   const year = movie.release_date ? parseInt(movie.release_date.split('-')[0]) : (movie.first_air_date ? parseInt(movie.first_air_date.split('-')[0]) : undefined);
 
-  const currentUrl = `${BACKEND_URL}/api/stream?title=${encodeURIComponent(titleToSearch)}${selectedQuality ? `&quality=${selectedQuality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=${!useEmbed}`;
+  const currentUrl = `${BACKEND_URL}/api/stream?title=${encodeURIComponent(titleToSearch)}${selectedQuality ? `&quality=${selectedQuality}` : ''}${year ? `&year=${year}` : ''}&season=${season}&episode=${episode}&proxy=${!useEmbed}${isSeries ? '&is_tv=true' : ''}`;
 
   useEffect(() => {
     return () => {
@@ -206,7 +208,8 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
       title: titleToSearch,
       ...(year && { year: year.toString() }),
       season: season.toString(),
-      episode: episode.toString()
+      episode: episode.toString(),
+      ...(isSeries && { is_tv: 'true' })
     });
 
     Promise.all([
@@ -358,14 +361,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
           </div>
         </div>
 
-        <button
-          onClick={() => setUseEmbed(!useEmbed)}
-          className={`px-4 py-1.5 rounded-lg text-sm font-bold transition-all border ${useEmbed ? 'bg-[#e50914] border-[#e50914] text-white' : 'bg-black/40 border-white/20 text-gray-400 hover:text-white'}`}
-        >
-          {useEmbed ? 'Mode: Global Mirror' : 'Mode: Direct Play'}
-        </button>
-
-        {!useEmbed && (
+        <div className="flex items-center space-x-4">
           <div className="flex items-center space-x-2 bg-black/40 backdrop-blur-md rounded-lg px-3 py-1 border border-white/10">
             <span className="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Quality</span>
             <select
@@ -376,7 +372,7 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
               {qualities.map(q => <option key={q} value={q}>{q}</option>)}
             </select>
           </div>
-        )}
+        </div>
       </div>
 
       {/* Loading & Error Overlays */}
@@ -397,18 +393,17 @@ const Player: React.FC<PlayerProps> = ({ movie, onBack }) => {
               </p>
               <div className="flex flex-col space-y-3">
                 <button onClick={() => window.location.reload()} className="w-full py-3 bg-white text-black font-bold rounded hover:bg-gray-200 transition">Try Again</button>
-                <button onClick={() => setUseEmbed(true)} className="w-full py-3 bg-transparent border border-white/20 text-white font-bold rounded hover:bg-white/10 transition">Use Global Mirror (Ads)</button>
               </div>
             </div>
           )}
           {!loading && !errorType && !useEmbed && qualities.length === 0 && (
             <div className="text-center p-8 bg-black/80 rounded-2xl border border-white/10 backdrop-blur-xl max-w-sm">
               <WifiOff className="w-16 h-16 text-gray-500 mx-auto mb-4" />
-              <h2 className="text-white text-xl font-bold mb-2">No Clean Links Found</h2>
+              <h2 className="text-white text-xl font-bold mb-2">Source Blocked</h2>
               <p className="text-gray-400 text-sm mb-6">
-                The cloud server is blocked. To get the clean version, run the backend on your laptop or switch to Global Mirror.
+                The cloud server is having trouble finding a clean link for this title.
               </p>
-              <button onClick={() => setUseEmbed(true)} className="w-full py-3 bg-[#e50914] text-white font-bold rounded hover:bg-[#b81d24] transition">Switch to Global Mirror</button>
+              <button onClick={() => window.location.reload()} className="w-full py-3 bg-[#e50914] text-white font-bold rounded hover:bg-[#b81d24] transition">Retry</button>
             </div>
           )}
         </div>
