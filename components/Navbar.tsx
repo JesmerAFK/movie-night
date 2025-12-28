@@ -5,16 +5,28 @@ interface NavbarProps {
   onSearch: (query: string) => void;
   activeCategory: string;
   setActiveCategory: (cat: string) => void;
+  onAuthClick: () => void;
 }
 
-const Navbar: React.FC<NavbarProps> = ({ onSearch, activeCategory, setActiveCategory }) => {
+import { auth } from '../services/firebase';
+import { onAuthStateChanged, User as FirebaseUser, signOut } from 'firebase/auth';
+
+const Navbar: React.FC<NavbarProps> = ({ onSearch, activeCategory, setActiveCategory, onAuthClick }) => {
   const [isScrolled, setIsScrolled] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [query, setQuery] = useState('');
   const [clickCount, setClickCount] = useState(0);
+  const [user, setUser] = useState<FirebaseUser | null>(null);
   const isVIP = localStorage.getItem('jmafk_vip') === 'true';
 
   const menuItems = ['Home', 'TV Shows', 'Movies', 'Cartoons', 'My List'];
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+    });
+    return () => unsubscribe();
+  }, []);
 
   const handleLogoClick = () => {
     const newCount = clickCount + 1;
@@ -88,10 +100,34 @@ const Navbar: React.FC<NavbarProps> = ({ onSearch, activeCategory, setActiveCate
             />
           </div>
           <Bell className="w-5 h-5 hidden sm:block cursor-pointer hover:text-gray-300" />
-          <div className="flex items-center cursor-pointer">
-            <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center">
-              <User className="w-5 h-5" />
-            </div>
+
+          <div className="flex items-center space-x-4">
+            {user ? (
+              <div className="group relative">
+                <div className="w-8 h-8 rounded bg-blue-600 flex items-center justify-center cursor-pointer">
+                  <User className="w-5 h-5" />
+                </div>
+                <div className="absolute right-0 top-full pt-4 opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all">
+                  <div className="bg-black/95 border border-white/10 p-4 rounded min-w-[200px] shadow-2xl">
+                    <p className="text-white font-bold text-sm mb-1 truncate">{user.displayName || 'Watcher'}</p>
+                    <p className="text-gray-400 text-[10px] mb-4 truncate">{user.email}</p>
+                    <button
+                      onClick={() => signOut(auth)}
+                      className="w-full py-2 hover:bg-white/5 text-white text-xs border-t border-white/10 transition-colors"
+                    >
+                      Sign out of JMAFK
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={onAuthClick}
+                className="bg-[#e50914] text-white px-4 py-1.5 rounded text-xs md:text-sm font-bold active:scale-95 transition-all shadow-lg shadow-red-600/20"
+              >
+                Sign In
+              </button>
+            )}
           </div>
         </div>
       </div>

@@ -5,8 +5,12 @@ import Row from './components/Row';
 import Modal from './components/Modal';
 import Player from './components/Player';
 import AdContainer from './components/AdContainer';
+import AuthModal from './components/Auth/AuthModal';
 import { Movie } from './types';
 import { requests } from './services/api';
+import { db } from './services/firebase';
+import { ref, get } from 'firebase/database';
+import { Users, Play, X } from 'lucide-react';
 
 const App: React.FC = () => {
   const [featuredMovie, setFeaturedMovie] = useState<Movie | null>(null);
@@ -31,6 +35,9 @@ const App: React.FC = () => {
   const [startEpisode, setStartEpisode] = useState(1);
   const [activeCategory, setActiveCategory] = useState('Home');
   const [myList, setMyList] = useState<Movie[]>([]);
+  const [lobbyMovie, setLobbyMovie] = useState<Movie | null>(null);
+  const [joiningRoomId, setJoiningRoomId] = useState<string | null>(null);
+  const [showAuthModal, setShowAuthModal] = useState(false);
 
   // Clear search results when category changes
   useEffect(() => {
@@ -49,6 +56,46 @@ const App: React.FC = () => {
   useEffect(() => {
     localStorage.setItem('jmafk_mylist', JSON.stringify(myList));
   }, [myList]);
+
+  // Check for Room in URL and show lobby
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const rid = params.get('room');
+    if (rid) {
+      console.log("🔍 Room detected in URL:", rid);
+      const checkRoom = async () => {
+        try {
+          const snapshot = await get(ref(db, `rooms/${rid}`));
+          if (snapshot.exists()) {
+            const roomData = snapshot.val();
+            console.log("✅ Room data found in Firebase:", roomData);
+
+            // Try fetching as TV first if labeled, otherwise fallback to Movie
+            const type = roomData.isTV ? 'tv' : 'movie';
+            let movieDetails = await requests.fetchDetails(roomData.movieId, type);
+
+            // Fallback if type was wrong/missing
+            if (!movieDetails) {
+              movieDetails = await requests.fetchDetails(roomData.movieId, type === 'tv' ? 'movie' : 'tv');
+            }
+
+            if (movieDetails) {
+              console.log("🎬 Movie details fetched:", movieDetails.title || movieDetails.name);
+              setLobbyMovie(movieDetails);
+              setJoiningRoomId(rid);
+            } else {
+              console.error("❌ Could not fetch movie details for ID:", roomData.movieId);
+            }
+          } else {
+            console.warn("⚠️ Room does not exist in Firebase.");
+          }
+        } catch (err) {
+          console.error("🔥 Firebase check error:", err);
+        }
+      };
+      checkRoom();
+    }
+  }, []);
 
   useEffect(() => {
     const fetchAllData = async () => {
@@ -165,7 +212,12 @@ const App: React.FC = () => {
   // Main Browsing View
   return (
     <div className="relative min-h-screen bg-[#141414] pb-20">
-      <Navbar onSearch={handleSearch} activeCategory={activeCategory} setActiveCategory={setActiveCategory} />
+      <Navbar
+        onSearch={handleSearch}
+        activeCategory={activeCategory}
+        setActiveCategory={setActiveCategory}
+        onAuthClick={() => setShowAuthModal(true)}
+      />
 
       {/* If Searching, show Grid instead of Rows */}
       {searchResults ? (
@@ -276,6 +328,110 @@ const App: React.FC = () => {
         </>
       )}
 
+      {/* Lobby Join Overlay */}
+      {lobbyMovie && joiningRoomId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+          <div className="bg-[#181818] w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-white/10 animate-in zoom-in duration-300">
+            <div className="relative aspect-video">
+              <img
+                src={`https://image.tmdb.org/t/p/original${lobbyMovie.backdrop_path || lobbyMovie.poster_path}`}
+                className="w-full h-full object-cover"
+                alt="Movie Backdrop"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#181818] to-transparent" />
+              <button
+                onClick={() => { setLobbyMovie(null); setJoiningRoomId(null); window.history.pushState({}, '', '/'); }}
+                className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 rounded-full transition"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            <div className="p-8 text-center">
+              <div className="flex justify-center mb-4">
+                <div className="bg-[#e50914] p-3 rounded-full shadow-glow animate-pulse">
+                  <Users className="w-8 h-8 text-white" />
+                </div>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Watch Together?</h2>
+              <p className="text-gray-400 mb-6 italic">"Someone invited you to watch <b>{lobbyMovie.title || lobbyMovie.name}</b> in real-time."</p>
+
+              <div className="flex flex-col sm:flex-row gap-4">
+                <button
+                  onClick={() => {
+                    handlePlay(lobbyMovie);
+                    setLobbyMovie(null);
+                    setJoiningRoomId(null);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-[#e50914] hover:bg-[#b81d24] text-white font-bold py-3 px-6 rounded-lg transition-all active:scale-95 shadow-lg shadow-red-600/20"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  Join Room
+                </button>
+                <button
+                  onClick={() => { setLobbyMovie(null); setJoiningRoomId(null); window.history.pushState({}, '', '/'); }}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-6 rounded-lg transition"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Lobby Join Overlay */}
+      {lobbyMovie && joiningRoomId && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 backdrop-blur-md p-4">
+          <div className="bg-[#181818] w-full max-w-lg rounded-xl overflow-hidden shadow-2xl border border-white/10 animate-in zoom-in duration-300">
+            <div className="relative aspect-video">
+              <img
+                src={`https://image.tmdb.org/t/p/original${lobbyMovie.backdrop_path || lobbyMovie.poster_path}`}
+                className="w-full h-full object-cover"
+                alt="Movie Backdrop"
+              />
+              <div className="absolute inset-0 bg-gradient-to-t from-[#181818] to-transparent" />
+              <button
+                onClick={() => { setLobbyMovie(null); setJoiningRoomId(null); window.history.pushState({}, '', '/'); }}
+                className="absolute top-4 right-4 p-2 bg-black/50 hover:bg-black/80 rounded-full transition"
+              >
+                <X className="w-5 h-5 text-white" />
+              </button>
+            </div>
+
+            <div className="p-8 text-center">
+              <div className="flex justify-center mb-4">
+                <div className="bg-[#e50914] p-3 rounded-full shadow-glow animate-pulse">
+                  <Users className="w-8 h-8 text-white" />
+                </div>
+              </div>
+              <h2 className="text-2xl font-bold text-white mb-2">Watch Together?</h2>
+              <p className="text-gray-400 mb-6 italic text-sm">Someone invited you to watch <b>{lobbyMovie.title || lobbyMovie.name}</b> in real-time.</p>
+
+              <div className="flex flex-col sm:flex-row gap-4 mt-8">
+                <button
+                  onClick={() => {
+                    handlePlay(lobbyMovie);
+                    setLobbyMovie(null);
+                    setJoiningRoomId(null);
+                  }}
+                  className="flex-1 flex items-center justify-center gap-2 bg-[#e50914] hover:bg-[#b81d24] text-white font-bold py-3 px-6 rounded-lg transition-all active:scale-95 shadow-lg shadow-red-600/20"
+                >
+                  <Play className="w-5 h-5 fill-current" />
+                  Join Room
+                </button>
+                <button
+                  onClick={() => { setLobbyMovie(null); setJoiningRoomId(null); window.history.pushState({}, '', '/'); }}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white font-bold py-3 px-6 rounded-lg transition"
+                >
+                  Maybe Later
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Modal */}
       {selectedMovie && (
         <Modal
@@ -286,6 +442,12 @@ const App: React.FC = () => {
           onToggleList={() => toggleMyList(selectedMovie)}
         />
       )}
+
+      {/* Auth Modal */}
+      <AuthModal
+        isOpen={showAuthModal}
+        onClose={() => setShowAuthModal(false)}
+      />
 
       {/* Footer */}
       <footer className="mt-20 py-10 text-center text-gray-500 text-sm bg-black/50">
