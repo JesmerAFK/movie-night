@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Movie Night by JMAFK</string>
+    <string name="title_activity_main">Movie Night by JMAFK</string>
+    <string name="package_name">com.jmafk.movienight</string>
+    <string name="custom_url_scheme">com.jmafk.movienight</string>
+</resources>

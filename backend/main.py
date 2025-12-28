@@ -139,7 +139,9 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         # Proxy logic
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': '*/*',
+            'Connection': 'keep-alive',
         }
         
         range_header = request.headers.get('Range')
@@ -147,18 +149,30 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         if range_header:
             proxy_headers['Range'] = range_header
                   
-        client = httpx.AsyncClient(timeout=30.0, follow_redirects=True)
+        client = httpx.AsyncClient(timeout=60.0, follow_redirects=True, limits=httpx.Limits(max_connections=100))
         
         async def stream_generator():
             try:
-                async with client.stream("GET", stream_url, headers=proxy_headers) as r:
-                    yield r.status_code
-                    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-                    resp_headers = {k: v for k, v in r.headers.items() if k.lower() not in excluded_headers}
-                    if 'Content-Length' in r.headers:
-                        resp_headers['Content-Length'] = r.headers['Content-Length']
-                    yield resp_headers
-                    async for chunk in r.aiter_bytes(chunk_size=1024*128):
+                # Use a smaller pool and streaming to avoid memory overhead
+                async with client.stream("GET", stream_url, headers=proxy_headers, timeout=60.0) as r:
+                    # Capture vital headers before starting iteration
+                    h = r.headers
+                    status = r.status_code
+                    msg = {
+                        "status": status,
+                        "headers": {
+                            "Content-Type": h.get("Content-Type", "video/mp4"),
+                            "Accept-Ranges": "bytes",
+                            "Access-Control-Allow-Origin": "*",
+                        }
+                    }
+                    if "Content-Length" in h: msg["headers"]["Content-Length"] = h["Content-Length"]
+                    if "Content-Range" in h: msg["headers"]["Content-Range"] = h["Content-Range"]
+                    
+                    yield msg
+                    
+                    # Yield chunks as they arrive
+                    async for chunk in r.aiter_bytes(chunk_size=16384): # 16KB chunks for smoother flow
                         yield chunk
             except Exception as e:
                 print(f"Streaming error: {e}")
@@ -167,9 +181,14 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
 
         gen = stream_generator()
         try:
-            status_code = await anext(gen)
-            response_headers = await anext(gen)
-            return StreamingResponse(gen, status_code=status_code, headers=response_headers, media_type="video/mp4")
+            # First yield must be the status and headers dict
+            config = await anext(gen)
+            return StreamingResponse(
+                gen, 
+                status_code=config["status"], 
+                headers=config["headers"], 
+                media_type=config["headers"]["Content-Type"]
+            )
         except StopAsyncIteration:
              raise HTTPException(status_code=403, detail="Source blocked or unavailable.")
 
