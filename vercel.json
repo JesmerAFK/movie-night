@@ -1,14 +1,14 @@
 {
   "version": 2,
+  "functions": {
+    "api/main.py": {
+      "maxDuration": 60
+    }
+  },
   "rewrites": [
     {
       "source": "/(.*)",
-      "destination": "/backend/main.py"
+      "destination": "/api/main.py"
     }
-  ],
-  "functions": {
-    "backend/main.py": {
-      "maxDuration": 60
-    }
-  }
+  ]
 }
