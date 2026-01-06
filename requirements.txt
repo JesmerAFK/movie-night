@@ -4,3 +4,4 @@ moviebox-api
 requests
 httpx
 python-multipart
+aiofiles
