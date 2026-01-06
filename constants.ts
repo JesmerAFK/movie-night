@@ -7,4 +7,4 @@ export const POSTER_BASE_URL = "https://image.tmdb.org/t/p/w500";
  * BACKEND ROUTING:
  * Hosted on Railway to ensure best performance and cross-device access.
  */
-export const BACKEND_URL = "https://movie-night-production-51e0.up.railway.app";
+export const BACKEND_URL = "https://movie-night-hr0zzt73y-jesmerafks-projects.vercel.app/";
