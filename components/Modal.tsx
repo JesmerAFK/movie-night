@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Movie } from '../types';
 import { IMAGE_BASE_URL } from '../constants';
 import { X, Play, Plus, ThumbsUp, Check, Info, Star, Calendar, Globe, TrendingUp } from 'lucide-react';
-import { BACKEND_URL } from '../constants';
+import { requests } from '../services/api';
 
 interface ModalProps {
     movie: Movie;
@@ -17,125 +17,101 @@ const Modal: React.FC<ModalProps> = ({ movie, onClose, onPlay, isAddedToList, on
     const [selectedSeason, setSelectedSeason] = useState(1);
     const [loading, setLoading] = useState(false);
 
-    const isTV = movie.first_air_date !== undefined || (metadata && metadata.is_tv);
+    const isTV = movie.first_air_date !== undefined || movie.name !== undefined;
     const movieTitle = movie.title || movie.name || movie.original_title || "Untitled";
 
     useEffect(() => {
-        const titleToSearch = movie.title || movie.name || "";
-        const year = movie.release_date ? movie.release_date.split('-')[0] : (movie.first_air_date ? movie.first_air_date.split('-')[0] : undefined);
-
         setLoading(true);
-        fetch(`${BACKEND_URL}/api/metadata?title=${encodeURIComponent(titleToSearch)}${year ? `&year=${year}` : ''}`)
-            .then(res => res.json())
-            .then(data => {
+        const type = isTV ? 'tv' : 'movie';
+        requests.fetchDetails(movie.id, type).then(data => {
+            if (data) {
                 setMetadata(data);
-                if (data && data.is_tv && data.seasons && data.seasons.length > 0) {
-                    setSelectedSeason(data.seasons[0].season);
+                if (isTV && (data as any).seasons && (data as any).seasons.length > 0) {
+                    // Filter out "Season 0" (Specials) if preferred, or just pick first
+                    const firstSeason = (data as any).seasons.find((s: any) => s.season_number > 0) || (data as any).seasons[0];
+                    setSelectedSeason(firstSeason.season_number);
                 }
-                setLoading(false);
-            })
-            .catch(err => {
-                console.error("Metadata error:", err);
-                setLoading(false);
-            });
-    }, [movie]);
+            }
+            setLoading(false);
+        }).catch(err => {
+            console.error("Metadata error:", err);
+            setLoading(false);
+        });
+    }, [movie.id, isTV]);
 
-    const currentSeasonData = metadata?.seasons?.find((s: any) => s.season === selectedSeason);
-    const episodes = currentSeasonData ? Array.from({ length: currentSeasonData.episodes_count }, (_, i) => i + 1) : [];
+    const currentSeasonData = metadata?.seasons?.find((s: any) => s.season_number === selectedSeason);
+    const episodes = currentSeasonData ? Array.from({ length: currentSeasonData.episode_count }, (_, i) => i + 1) : [];
 
     return (
         <div className="fixed inset-0 z-[100] flex justify-center overflow-y-auto no-scrollbar bg-black/90 backdrop-blur-2xl">
             {/* Backdrop click to close */}
             <div className="fixed inset-0 -z-10" onClick={onClose}></div>
 
-            <div className="relative w-full max-w-4xl h-fit bg-[#0f0f0f] sm:my-10 sm:rounded-[2.5rem] shadow-[0_0_100px_rgba(0,0,0,1)] overflow-hidden border border-white/5 animate-in slide-in-from-bottom-10 duration-500">
+            <div className="relative w-full max-w-4xl h-fit bg-[#141414] sm:my-10 sm:rounded-md shadow-[0_0_100px_rgba(0,0,0,1)] overflow-hidden border border-white/5 animate-in slide-in-from-bottom-10 duration-500">
                 {/* Close Button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-6 right-6 z-[110] flex h-12 w-12 items-center justify-center rounded-2xl bg-black/40 backdrop-blur-xl border border-white/10 text-white hover:bg-black transition-all active:scale-95 group"
+                    className="absolute top-6 right-6 z-[110] flex h-10 w-10 items-center justify-center rounded-full bg-[#141414] text-white hover:bg-white hover:text-black transition-all active:scale-95 group"
                 >
-                    <X className="h-6 w-6 group-hover:rotate-90 transition-transform" />
+                    <X className="h-6 w-6" />
                 </button>
 
                 {/* Banner Section */}
                 <div className="relative w-full aspect-video md:aspect-[21/9] bg-black">
                     {(movie.backdrop_path || movie.poster_path) && (
                         <img
-                            src={`${IMAGE_BASE_URL}${movie.backdrop_path || movie.poster_path}`}
+                            src={`${IMAGE_BASE_URL}w780${movie.backdrop_path || movie.poster_path}`}
                             alt={movieTitle}
                             className="w-full h-full object-cover"
                         />
                     )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-[#0f0f0f] via-[#0f0f0f]/20 to-transparent" />
-                    <div className="absolute inset-x-0 top-0 h-32 bg-gradient-to-b from-black/80 to-transparent" />
+                    <div className="absolute inset-0 bg-gradient-to-t from-[#141414] via-[#141414]/20 to-transparent" />
 
                     {/* Banner Content */}
                     <div className="absolute bottom-10 left-8 md:left-12 space-y-6 max-w-[90%] z-10">
-                        <div className="flex items-center space-x-2">
-                            <div className="bg-[#e50914] text-white text-[10px] font-black px-2 py-0.5 rounded-sm">MOVIE NIGHT</div>
-                            <div className="flex items-center space-x-1 text-green-500 text-xs font-black">
-                                <TrendingUp className="w-4 h-4" />
-                                <span>{Math.round(movie.vote_average * 10)}% MATCH</span>
-                            </div>
-                        </div>
-                        <h2 className="text-4xl md:text-6xl font-black text-white drop-shadow-2xl uppercase tracking-tighter">
+                        <h2 className="text-3xl md:text-5xl font-bold text-white drop-shadow-2xl">
                             {movieTitle}
                         </h2>
                         <div className="flex items-center space-x-4 pt-2">
                             <button
                                 onClick={() => onPlay(movie, isTV ? selectedSeason : undefined, isTV ? 1 : undefined)}
-                                className="flex items-center gap-x-3 rounded-2xl bg-white px-10 py-4 text-sm font-black text-black transition hover:bg-gray-200 active:scale-95 uppercase tracking-widest"
+                                className="flex items-center gap-x-3 rounded bg-white px-8 py-2.5 text-lg font-bold text-black transition hover:bg-white/80 active:scale-95"
                             >
-                                <Play className="h-5 w-5 fill-black" />
-                                Play Now
+                                <Play className="h-6 w-6 fill-black" />
+                                Play
                             </button>
                             <button
                                 onClick={onToggleList}
-                                className={`flex h-14 w-14 items-center justify-center rounded-2xl border border-white/10 transition-all active:scale-95 ${isAddedToList ? 'bg-[#e50914] border-[#e50914]' : 'bg-white/5 hover:bg-white/10'}`}
+                                className={`flex h-12 w-12 items-center justify-center rounded-full border border-white/40 transition-all active:scale-95 ${isAddedToList ? 'bg-white text-black' : 'bg-black/60 hover:border-white text-white'}`}
                             >
-                                {isAddedToList ? <Check className="h-6 w-6 text-white" /> : <Plus className="h-6 w-6 text-white" />}
+                                {isAddedToList ? <Check className="h-6 w-6" /> : <Plus className="h-6 w-6" />}
                             </button>
                         </div>
                     </div>
                 </div>
 
                 {/* Info Grid */}
-                <div className="p-8 md:p-12 space-y-12">
+                <div className="p-8 md:p-12 space-y-8">
                     <div className="grid grid-cols-1 md:grid-cols-[2fr_1fr] gap-12">
-                        <div className="space-y-8">
-                            <div className="flex flex-wrap gap-4 text-xs font-black text-gray-400 uppercase tracking-widest">
-                                <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-full">
-                                    <Calendar className="w-3.5 h-3.5 text-[#e50914]" />
-                                    <span>{movie.release_date?.substring(0, 4) || movie.first_air_date?.substring(0, 4) || '2025'}</span>
-                                </div>
-                                <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-full">
-                                    <Globe className="w-3.5 h-3.5 text-blue-400" />
-                                    <span>{movie.original_language || 'EN'}</span>
-                                </div>
-                                <div className="flex items-center space-x-2 bg-white/5 px-3 py-1.5 rounded-full">
-                                    <Star className="w-3.5 h-3.5 text-yellow-500 fill-current" />
-                                    <span>{movie.vote_average.toFixed(1)} TMDB</span>
-                                </div>
+                        <div className="space-y-6">
+                            <div className="flex items-center space-x-2 text-sm font-semibold">
+                                <span className="text-green-500">{Math.round(movie.vote_average * 10)}% Match</span>
+                                <span className="text-gray-400">{movie.release_date?.substring(0, 4) || movie.first_air_date?.substring(0, 4) || '2025'}</span>
+                                <span className="border border-gray-500 px-1.5 rounded-sm text-[10px] text-gray-400">HD</span>
                             </div>
-                            <p className="text-gray-300 text-lg leading-relaxed font-medium">
+                            <p className="text-white text-lg leading-relaxed">
                                 {movie.overview}
                             </p>
                         </div>
 
-                        <div className="space-y-6 pt-2">
-                            <div className="p-6 bg-white/[0.03] border border-white/5 rounded-3xl space-y-4">
-                                <div>
-                                    <h5 className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Status</h5>
-                                    <p className="text-white text-sm font-bold">Released</p>
-                                </div>
-                                <div>
-                                    <h5 className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Production</h5>
-                                    <p className="text-white text-sm font-bold">Global Origins</p>
-                                </div>
-                                <div>
-                                    <h5 className="text-[10px] text-gray-500 font-black uppercase tracking-widest mb-1">Age Rating</h5>
-                                    <p className="text-white text-sm font-bold border border-white/20 inline-block px-2 rounded-sm italic">PG-13</p>
-                                </div>
+                        <div className="space-y-4 text-sm">
+                            <div className="flex flex-wrap gap-2">
+                                <span className="text-gray-500">Genres:</span>
+                                <span className="text-white">Drama, Entertainment</span>
+                            </div>
+                            <div className="flex flex-wrap gap-2">
+                                <span className="text-gray-500">Language:</span>
+                                <span className="text-white uppercase">{movie.original_language || 'EN'}</span>
                             </div>
                         </div>
                     </div>
@@ -152,7 +128,7 @@ const Modal: React.FC<ModalProps> = ({ movie, onClose, onPlay, isAddedToList, on
                                         className="bg-white/5 text-white border border-white/10 rounded-xl px-5 py-3 text-sm font-bold outline-none cursor-pointer hover:bg-white/10 transition"
                                     >
                                         {metadata.seasons.map((s: any) => (
-                                            <option key={s.season} value={s.season}>Season {s.season}</option>
+                                            <option key={s.season_number} value={s.season_number}>Season {s.season_number}</option>
                                         ))}
                                     </select>
                                 )}

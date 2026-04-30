@@ -1,87 +1,61 @@
 import React from 'react';
-import { Home, Search, Bookmark, User, UserCircle } from 'lucide-react';
-import { auth } from '../services/firebase';
+import { Home, Search, Bookmark, User as UserIcon, Download } from 'lucide-react';
 import { User as FirebaseUser } from 'firebase/auth';
 
 interface FooterNavProps {
     activeCategory: string;
     setActiveCategory: (cat: string) => void;
-    user: FirebaseUser | null;
-    onAuthClick: () => void;
     isSearchOpen: boolean;
     setIsSearchOpen: (open: boolean) => void;
+    user: FirebaseUser | null;
 }
 
-const FooterNav: React.FC<FooterNavProps> = ({
-    activeCategory,
-    setActiveCategory,
-    user,
-    onAuthClick,
-    isSearchOpen,
-    setIsSearchOpen
-}) => {
+const FooterNav: React.FC<FooterNavProps> = ({ activeCategory, setActiveCategory, isSearchOpen, setIsSearchOpen, user }) => {
     return (
-        <div className="fixed bottom-0 left-0 right-0 z-50 bg-[#141414]/90 backdrop-blur-xl border-t border-white/5 px-6 pb-safe-bottom pt-3">
-            <div className="flex items-center justify-between max-w-lg mx-auto">
+        <div className="fixed bottom-0 left-0 w-full z-[100] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] md:hidden pointer-events-none">
+            <div className="bg-black/95 border border-white/5 rounded-2xl h-16 flex items-center justify-around px-2 pointer-events-auto shadow-2xl backdrop-blur-xl">
                 <button
-                    onClick={() => {
-                        setActiveCategory('Home');
-                        setIsSearchOpen(false);
-                    }}
-                    className={`flex flex-col items-center space-y-1 transition-colors ${activeCategory === 'Home' && !isSearchOpen ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                    onClick={() => { setActiveCategory('Home'); setIsSearchOpen(false); }}
+                    className={`flex flex-col items-center space-y-1 ${activeCategory === 'Home' && !isSearchOpen ? 'text-[#E50914]' : 'text-white/40'}`}
                 >
                     <Home className="w-6 h-6" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Home</span>
+                    <span className="text-[10px] font-medium">Home</span>
                 </button>
 
                 <button
                     onClick={() => setIsSearchOpen(true)}
-                    className={`flex flex-col items-center space-y-1 transition-colors ${isSearchOpen ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                    className={`flex flex-col items-center space-y-1 ${isSearchOpen ? 'text-[#E50914]' : 'text-white/40'}`}
                 >
                     <Search className="w-6 h-6" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">Search</span>
+                    <span className="text-[10px] font-medium">Search</span>
                 </button>
 
                 <button
-                    onClick={() => {
-                        setActiveCategory('My List');
-                        setIsSearchOpen(false);
-                    }}
-                    className={`flex flex-col items-center space-y-1 transition-colors ${activeCategory === 'My List' && !isSearchOpen ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
+                    onClick={() => { setActiveCategory('My List'); setIsSearchOpen(false); }}
+                    className={`flex flex-col items-center space-y-1 ${activeCategory === 'My List' && !isSearchOpen ? 'text-[#E50914]' : 'text-white/40'}`}
                 >
                     <Bookmark className="w-6 h-6" />
-                    <span className="text-[10px] font-bold uppercase tracking-widest">My List</span>
+                    <span className="text-[10px] font-medium">My List</span>
                 </button>
 
-                {user ? (
-                    <button
-                        onClick={() => {
-                            setActiveCategory('Profile'); // We can add a profile category or modal
-                            setIsSearchOpen(false);
-                        }}
-                        className={`flex flex-col items-center space-y-1 transition-colors ${activeCategory === 'Profile' ? 'text-white' : 'text-gray-500 hover:text-gray-300'}`}
-                    >
-                        <div className="w-6 h-6 bg-blue-600 rounded flex items-center justify-center">
-                            <User className="w-4 h-4 text-white" />
-                        </div>
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Me</span>
-                    </button>
-                ) : (
-                    <button
-                        onClick={onAuthClick}
-                        className="flex flex-col items-center space-y-1 text-[#e50914] hover:text-red-400 transition-colors"
-                    >
-                        <UserCircle className="w-6 h-6" />
-                        <span className="text-[10px] font-bold uppercase tracking-widest">Sign In</span>
-                    </button>
-                )}
-            </div>
+                <button
+                    onClick={() => { setActiveCategory('Downloads'); setIsSearchOpen(false); }}
+                    className={`flex flex-col items-center space-y-1 ${activeCategory === 'Downloads' && !isSearchOpen ? 'text-[#E50914]' : 'text-white/40'}`}
+                >
+                    <Download className="w-6 h-6" />
+                    <span className="text-[10px] font-medium">Downloads</span>
+                </button>
 
-            <style>{`
-        .pb-safe-bottom {
-          padding-bottom: calc(env(safe-area-inset-bottom) + 0.75rem);
-        }
-      `}</style>
+                <button
+                    onClick={() => { setActiveCategory('Profile'); setIsSearchOpen(false); }}
+                    className={`flex flex-col items-center space-y-1 ${activeCategory === 'Profile' ? 'text-[#E50914]' : 'text-white/40'}`}
+                >
+                    <div className={`w-6 h-6 rounded-full border-2 ${activeCategory === 'Profile' ? 'border-[#E50914]' : 'border-white/10'} flex items-center justify-center`}>
+                        <UserIcon className="w-3 h-3 text-white" />
+                    </div>
+                    <span className="text-[10px] font-medium">Profile</span>
+                </button>
+            </div>
         </div>
     );
 };

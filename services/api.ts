@@ -32,7 +32,7 @@ export const requests = {
   fetchAnimation: () => fetchFromTMDB(`discover/movie?with_genres=16`),
   fetchMystery: () => fetchFromTMDB(`discover/movie?with_genres=9648`),
   fetchTVShows: () => fetchFromTMDB(`tv/popular`),
-  fetchFamily: () => fetchFromTMDB(`discover/movie?with_genres=10751`),
+  fetchFamilyMovies: () => fetchFromTMDB(`discover/movie?with_genres=10751`),
   fetchDetails: async (id: number, type: 'movie' | 'tv'): Promise<Movie | null> => {
     try {
       const response = await fetch(`${BASE_URL}/${type}/${id}?api_key=${API_KEY}&language=en-US`);
@@ -43,7 +43,7 @@ export const requests = {
       return null;
     }
   },
-  searchMovies: async (query: string): Promise<Movie[]> => {
+  search: async (query: string): Promise<Movie[]> => {
     if (!query) return [];
     try {
       // Search for both movies and TV shows

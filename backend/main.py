@@ -13,7 +13,8 @@ from api_service import (
     get_stream_url, 
     get_media_metadata, 
     get_available_qualities, 
-    get_available_subtitles
+    get_available_subtitles,
+    get_available_qualities_with_urls
 )
 import httpx
 import re
@@ -57,6 +58,17 @@ async def get_subtitles(title: str, year: int = None, season: int = 1, episode: 
         return subs
     except Exception as e:
         print(f"Subtitle error: {e}")
+        return []
+
+@app.get("/api/downloads")
+async def get_downloads_links(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
+    if not title:
+        return []
+    try:
+        links = await get_available_qualities_with_urls(title, year=year, season=season, episode=episode, is_tv=is_tv)
+        return links
+    except Exception as e:
+        print(f"Download links error: {e}")
         return []
 
 @app.get("/api/subtitles/proxy")
@@ -124,6 +136,42 @@ async def proxy_subtitle(url: str):
     except Exception as e:
         print(f"Sub proxy total failure: {e}")
         raise HTTPException(status_code=500)
+
+@app.get("/api/download/proxy")
+async def download_proxy(url: str, title: str = "video"):
+    if not url: raise HTTPException(status_code=400)
+    
+    headers = {
+        'Referer': 'https://fmoviesunblocked.net/', 
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    }
+    
+    client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=True)
+    
+    async def stream_file():
+        try:
+            async with client.stream("GET", url, headers=headers) as r:
+                async for chunk in r.aiter_bytes(chunk_size=1024*1024): # 1MB chunks
+                    yield chunk
+        finally:
+            await client.aclose()
+
+    # Try to get file size for progress
+    try:
+        r = requests.head(url, headers=headers, allow_redirects=True, timeout=5)
+        content_length = r.headers.get('Content-Length')
+    except:
+        content_length = None
+
+    filename = f"{title.replace(' ', '_')}.mp4"
+    resp_headers = {
+        "Content-Disposition": f'attachment; filename="{filename}"',
+        "Access-Control-Allow-Origin": "*"
+    }
+    if content_length:
+        resp_headers["Content-Length"] = content_length
+
+    return StreamingResponse(stream_file(), headers=resp_headers, media_type="application/octet-stream")
 
 @app.get("/api/stream")
 async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True, is_tv: bool = None):

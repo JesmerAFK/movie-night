@@ -271,8 +271,8 @@ async def get_available_qualities(title: str, year: int = None, season: int = 1,
 
     return sorted(list(qualities), key=sort_key, reverse=True)
 
-async def get_available_qualities_with_urls(title: str, year: int = None, season: int = 1, episode: int = 1):
-    downloads, _ = await get_movie_files(title, year, season, episode)
+async def get_available_qualities_with_urls(title: str, year: int = None, season: int = 1, episode: int = 1, is_tv: bool = None):
+    downloads, _ = await get_movie_files(title, year, season, episode, is_tv=is_tv)
     if not downloads:
         return []
     

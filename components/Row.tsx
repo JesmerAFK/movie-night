@@ -1,7 +1,7 @@
 import React, { useRef, useState } from 'react';
 import { Movie } from '../types';
-import { POSTER_BASE_URL } from '../constants';
-import { ChevronLeft, ChevronRight, Play, Plus, Info, Star } from 'lucide-react';
+import { IMAGE_BASE_URL } from '../constants';
+import { ChevronLeft, ChevronRight, ChevronDown, Play, Plus, Info, Star } from 'lucide-react';
 
 interface RowProps {
   title: string;
@@ -40,7 +40,7 @@ const Row: React.FC<RowProps> = ({ title, movies, onMovieClick, isLargeRow }) =>
 
         <div
           ref={rowRef}
-          className="flex items-center space-x-2.5 overflow-x-scroll no-scrollbar md:space-x-4 md:p-2 py-4"
+          className="flex items-center space-x-2 overflow-x-scroll no-scrollbar md:space-x-2 py-4 px-2"
         >
           {movies.map((movie) => {
             if (!movie.poster_path && !movie.backdrop_path) return null;
@@ -50,38 +50,37 @@ const Row: React.FC<RowProps> = ({ title, movies, onMovieClick, isLargeRow }) =>
             return (
               <div
                 key={movie.id}
-                className={`relative min-w-[130px] sm:min-w-[160px] md:min-w-[200px] lg:min-w-[240px] cursor-pointer transition duration-300 ease-out hover:scale-110 hover:z-50 group/item`}
+                className={`relative min-w-[130px] sm:min-w-[150px] md:min-w-[170px] lg:min-w-[190px] aspect-[2/3] cursor-pointer transition-all duration-300 ease-out hover:z-50 hover:scale-105 group/item mx-1`}
                 onClick={() => onMovieClick(movie)}
               >
                 <img
-                  src={`${POSTER_BASE_URL}${isLargeRow ? movie.poster_path : movie.backdrop_path}`}
+                  src={`${IMAGE_BASE_URL}w342${movie.poster_path || movie.backdrop_path}`}
                   alt={movieTitle}
-                  className="rounded-sm object-cover md:rounded shadow-lg w-full h-auto"
+                  className="rounded-lg object-cover shadow-lg w-full h-full border border-white/[0.06]"
                   loading="lazy"
                 />
 
-                {/* Hover Overlay */}
-                <div className="absolute inset-0 bg-gradient-to-t from-black via-black/40 to-transparent opacity-0 group-hover/item:opacity-100 transition-opacity duration-300 rounded md:rounded flex flex-col justify-end p-2 md:p-4">
-                  <h3 className="text-white font-bold text-xs md:text-sm lg:text-base line-clamp-2 mb-1">
-                    {movieTitle}
-                  </h3>
-                  <div className="flex items-center space-x-2 text-[10px] md:text-xs text-gray-300">
-                    <span className="text-green-400 font-semibold">{Math.round((movie.vote_average || 0) * 10)}% Match</span>
-                    <span>{releaseYear}</span>
-                    <div className="flex items-center border border-gray-500 px-1 rounded-sm text-[8px] md:text-[10px]">
-                      HD
+                {/* Hover Overlay - stays on same image */}
+                <div className="absolute inset-0 rounded-lg overflow-hidden opacity-0 group-hover/item:opacity-100 transition-all duration-300 pointer-events-none">
+                  {/* Dark gradient from bottom */}
+                  <div className="absolute inset-0 bg-gradient-to-t from-black via-black/60 to-transparent" />
+                  
+                  {/* Play button centered */}
+                  <div className="absolute inset-0 flex items-center justify-center">
+                    <div className="w-10 h-10 bg-white/90 rounded-full flex items-center justify-center shadow-lg backdrop-blur-sm">
+                      <Play className="w-5 h-5 text-black fill-black ml-0.5" />
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2 mt-2">
-                    <div className="p-1 md:p-1.5 bg-white rounded-full hover:bg-gray-200 transition">
-                      <Play className="w-3 h-3 md:w-4 md:h-4 text-black fill-black" />
-                    </div>
-                    <div className="p-1 md:p-1.5 border-2 border-gray-400 rounded-full hover:border-white transition">
-                      <Plus className="w-3 h-3 md:w-4 md:h-4 text-white" />
-                    </div>
-                    <div className="flex-grow" />
-                    <div className="p-1 md:p-1.5 border-2 border-gray-400 rounded-full hover:border-white transition">
-                      <Info className="w-3 h-3 md:w-4 md:h-4 text-white" />
+
+                  {/* Bottom info */}
+                  <div className="absolute bottom-0 left-0 right-0 p-3 space-y-1">
+                    <h3 className="text-white font-bold text-xs truncate drop-shadow-lg">
+                      {movieTitle}
+                    </h3>
+                    <div className="flex items-center space-x-2 text-[10px]">
+                      <span className="text-green-400 font-bold">{Math.round((movie.vote_average || 0) * 10)}%</span>
+                      <span className="text-white/60">{releaseYear}</span>
+                      <span className="border border-white/30 px-1 rounded text-[8px] text-white/50">HD</span>
                     </div>
                   </div>
                 </div>

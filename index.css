@@ -1,20 +1,26 @@
-/* Native Mobile App Optimizations */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;700;900&display=swap');
+
+:root {
+    --safe-top: env(safe-area-inset-top);
+    --safe-bottom: env(safe-area-inset-bottom);
+    --netflix-red: #E50914;
+    --netflix-black: #141414;
+}
+
 * {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
     -webkit-tap-highlight-color: transparent;
-    -webkit-touch-callout: none;
-    user-select: none;
 }
 
-input, textarea {
-    user-select: text !important;
-}
-
-/* Fix for Android status bar / notch area if needed */
 body {
-    padding-top: env(safe-area-inset-top);
-    padding-bottom: env(safe-area-inset-bottom);
-    padding-left: env(safe-area-inset-left);
-    padding-right: env(safe-area-inset-right);
+    background-color: #141414;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    overflow-x: hidden;
+    line-height: 1.4;
+    min-height: 100vh;
 }
 
 .no-scrollbar::-webkit-scrollbar {
@@ -24,4 +30,30 @@ body {
 .no-scrollbar {
     -ms-overflow-style: none;
     scrollbar-width: none;
+}
+
+.premium-glass {
+    background: rgba(20, 20, 20, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.glass-card {
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+}
+
+/* Row Animation */
+.row-item {
+    transition: transform 300ms ease;
+}
+
+.row-item:hover {
+    transform: scale(1.08);
+    z-index: 10;
+}
+
+@media (max-width: 768px) {
+    .hero-height {
+        height: 75vh;
+    }
 }

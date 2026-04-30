@@ -4,7 +4,7 @@ import {
     Check, Ban, RotateCw, User, Link, Share2, Crown
 } from 'lucide-react';
 import { ref, onValue, set, push, onChildAdded, serverTimestamp, update, remove, get, off } from 'firebase/database';
-import { db, auth } from '../../services/firebase';
+import { rtdb, auth } from '../../services/firebase';
 import { v4 as uuidv4 } from 'uuid';
 
 interface WatchTogetherProps {
@@ -101,15 +101,15 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
         return () => {
             if (roomIdRef.current) {
                 const rRef = roomIdRef.current;
-                off(ref(db, `rooms/${rRef}/users`));
-                off(ref(db, `rooms/${rRef}/state`));
+                off(ref(rtdb, `rooms/${rRef}/users`));
+                off(ref(rtdb, `rooms/${rRef}/state`));
                 // We keep the user in the database so they can rejoin easily
             }
         };
     }, []);
 
     const validateAndJoin = async (rid: string) => {
-        const snapshot = await get(ref(db, `rooms/${rid}`));
+        const snapshot = await get(ref(rtdb, `rooms/${rid}`));
         if (snapshot.exists()) {
             const data = snapshot.val();
             // If my ID matches the hostId, restore my host powers!
@@ -151,7 +151,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
 
         const displayName = auth.currentUser.displayName || userName;
 
-        set(ref(db, `rooms/${rid}`), {
+        set(ref(rtdb, `rooms/${rid}`), {
             movieId: movie.id,
             hostId: userId,
             state: {
@@ -183,7 +183,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
             permissions: { canControl: false }
         };
 
-        update(ref(db, `rooms/${rid}/users`), {
+        update(ref(rtdb, `rooms/${rid}/users`), {
             [userId]: viewer
         }).then(() => {
             setupRoomListeners(rid);
@@ -192,7 +192,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
     };
 
     const setupRoomListeners = (rid: string) => {
-        onValue(ref(db, `rooms/${rid}/users`), (snapshot) => {
+        onValue(ref(rtdb, `rooms/${rid}/users`), (snapshot) => {
             const data = snapshot.val();
             if (data) {
                 setUsers(data);
@@ -205,7 +205,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
             }
         });
 
-        onValue(ref(db, `rooms/${rid}/state`), (snapshot) => {
+        onValue(ref(rtdb, `rooms/${rid}/state`), (snapshot) => {
             const state = snapshot.val();
             if (state && state.updatedBy !== userId) {
                 if (isHostRef.current) return;
@@ -228,7 +228,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
             }
         });
 
-        onValue(ref(db, `rooms/${rid}/messages`), (snapshot) => {
+        onValue(ref(rtdb, `rooms/${rid}/messages`), (snapshot) => {
             const data = snapshot.val();
             if (data) {
                 const msgList = Object.entries(data).map(([id, msg]: [string, any]) => ({ id, ...msg }));
@@ -236,7 +236,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
             }
         });
 
-        onChildAdded(ref(db, `rooms/${rid}/emotes`), (snapshot) => {
+        onChildAdded(ref(rtdb, `rooms/${rid}/emotes`), (snapshot) => {
             const emoteData = snapshot.val();
             const id = uuidv4();
             setFloatingEmotes(prev => [...prev, { id, emote: emoteData.emote, x: Math.random() * 80 + 10 }]);
@@ -247,13 +247,13 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
     useEffect(() => {
         if (!roomId || !myPermissions.canControl || isInternalUpdate.current) return;
 
-        update(ref(db, `rooms/${roomId}/state`), {
+        update(ref(rtdb, `rooms/${roomId}/state`), {
             isPlaying,
             lastUpdated: serverTimestamp(),
             updatedBy: userId
         });
 
-        push(ref(db, `rooms/${roomId}/messages`), {
+        push(ref(rtdb, `rooms/${roomId}/messages`), {
             userId: 'system',
             userName: 'Room',
             text: `${userName} ${isPlaying ? 'played' : 'paused'} movie`,
@@ -264,7 +264,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
     useEffect(() => {
         if (!roomId || !myPermissions.canControl || isInternalUpdate.current) return;
         const timer = setTimeout(() => {
-            update(ref(db, `rooms/${roomId}/state`), {
+            update(ref(rtdb, `rooms/${roomId}/state`), {
                 currentTime,
                 lastUpdated: serverTimestamp(),
                 updatedBy: userId
@@ -277,7 +277,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
         const targetRid = forcedRid || roomId;
         if (!targetRid) return;
 
-        const snapshot = await get(ref(db, `rooms/${targetRid}/state`));
+        const snapshot = await get(ref(rtdb, `rooms/${targetRid}/state`));
         if (snapshot.exists()) {
             const state = snapshot.val();
             onSyncPlay(state.isPlaying);
@@ -287,7 +287,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
 
     const togglePermission = (targetUserId: string, canControl: boolean) => {
         if (!isHost || !roomId) return;
-        update(ref(db, `rooms/${roomId}/users/${targetUserId}/permissions`), {
+        update(ref(rtdb, `rooms/${roomId}/users/${targetUserId}/permissions`), {
             canControl
         });
     };
@@ -301,7 +301,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
     const sendMessage = (e?: React.FormEvent) => {
         e?.preventDefault();
         if (!inputValue.trim() || !roomId) return;
-        push(ref(db, `rooms/${roomId}/messages`), {
+        push(ref(rtdb, `rooms/${roomId}/messages`), {
             userId, userName, text: inputValue.trim(), timestamp: serverTimestamp()
         });
         setInputValue('');
@@ -403,7 +403,7 @@ const WatchTogether: React.FC<WatchTogetherProps> = ({
                         <div className="px-5 py-3 flex items-center justify-between border-t border-white/5 bg-black/40 backdrop-blur-md">
                             {['❤️', '😂', '🔥', '😮', '👍', '👏'].map(emoji => (
                                 <button key={emoji} onClick={() => {
-                                    push(ref(db, `rooms/${roomId}/emotes`), { userId, emote: emoji, timestamp: serverTimestamp() });
+                                    push(ref(rtdb, `rooms/${roomId}/emotes`), { userId, emote: emoji, timestamp: serverTimestamp() });
                                 }} className="text-2xl hover:scale-150 active:scale-95 transition transform duration-300">
                                     {emoji}
                                 </button>
