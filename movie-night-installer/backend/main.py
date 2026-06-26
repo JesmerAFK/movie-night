@@ -1,8 +1,7 @@
 import uvicorn
 from fastapi import FastAPI, HTTPException, Response, Request
-from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
+from fastapi.responses import RedirectResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 import requests
 import os
 import sys
@@ -30,19 +29,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-# Serve static frontend files (for bundled app)
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DIST_DIR = os.path.join(BASE_DIR, '..', 'dist')
-
-if os.path.exists(DIST_DIR):
-    app.mount("/assets", StaticFiles(directory=os.path.join(DIST_DIR, 'assets')), name="static_assets")
-
-# Serve local assets (like intro video) from the root assets directory
-ROOT_DIR = os.path.dirname(BASE_DIR)
-local_assets_dir = os.path.join(ROOT_DIR, 'assets')
-if os.path.exists(local_assets_dir):
-    app.mount("/local_assets", StaticFiles(directory=local_assets_dir), name="local_assets")
 
 @app.get("/api/metadata")
 async def get_meta(title: str, year: int = None):
@@ -198,91 +184,6 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         if not stream_url:
              raise HTTPException(status_code=404, detail="Stream not found")
 
-        # Dynamic HEVC to H.264 Transcoding detection
-        import shutil
-        import asyncio
-        import sys
-        
-        url_lower = stream_url.lower()
-        is_hevc = "h265" in url_lower or "hevc" in url_lower or "/h265/" in url_lower
-        ffmpeg_path = shutil.which("ffmpeg")
-
-        if is_hevc and ffmpeg_path:
-            print(f"DEBUG: HEVC detected. Spawning ffmpeg transcoding proxy for: {stream_url[:100]}...")
-            headers_str = (
-                "Referer: https://fmoviesunblocked.net/\r\n"
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
-            )
-            cmd = [
-                ffmpeg_path,
-                "-reconnect", "1",
-                "-reconnect_streamed", "1",
-                "-reconnect_delay_max", "5",
-                "-headers", headers_str,
-                "-i", stream_url,
-                "-vf", "scale=-2:min(720\\,ih)",
-                "-c:v", "libx264",
-                "-preset", "ultrafast",
-                "-tune", "zerolatency",
-                "-threads", "0",
-                "-c:a", "copy",
-                "-sn",
-                "-f", "mp4",
-                "-movflags", "frag_keyframe+empty_moov",
-                "pipe:1"
-            ]
-            
-            import subprocess
-            creationflags = 0
-            if sys.platform == "win32":
-                creationflags = 0x08000000  # CREATE_NO_WINDOW
-                
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                creationflags=creationflags
-            )
-            
-            async def stream_generator_transcoded():
-                try:
-                    yield {
-                        "status": 200,
-                        "headers": {
-                            "Content-Type": "video/mp4",
-                            "Accept-Ranges": "bytes",
-                            "Access-Control-Allow-Origin": "*",
-                            "Cache-Control": "no-cache",
-                            "X-Content-Type-Options": "nosniff"
-                        }
-                    }
-                    while True:
-                        chunk = await process.stdout.read(65536)
-                        if not chunk:
-                            break
-                        yield chunk
-                except Exception as e:
-                    print(f"DEBUG: Transcoding stream exception: {e}")
-                finally:
-                    try:
-                        process.terminate()
-                        await process.wait()
-                    except:
-                        pass
-            
-            gen = stream_generator_transcoded()
-            try:
-                config = await anext(gen)
-                return StreamingResponse(
-                    gen,
-                    status_code=config["status"],
-                    headers=config["headers"],
-                    media_type="video/mp4"
-                )
-            except StopAsyncIteration:
-                raise HTTPException(status_code=403, detail="Transcoding failed to start.")
-
-        # Default streaming logic (H.264 Direct Stream or fallback if ffmpeg is missing)
         # Enhanced Proxy Headers
         headers = {
             'Referer': 'https://fmoviesunblocked.net/', 
@@ -347,24 +248,6 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
         if "403" in str(e):
              raise HTTPException(status_code=403, detail="Access Forbidden by source IP block.")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/{full_path:path}")
-async def serve_frontend(full_path: str):
-    """Serve the built frontend. For any non-API path, return index.html (SPA routing)."""
-    if not os.path.exists(DIST_DIR):
-        return Response("<h1>Movie Night</h1><p>Frontend not found.</p>", status_code=404)
-    
-    file_path = os.path.join(DIST_DIR, full_path)
-    if full_path and os.path.isfile(file_path):
-        return FileResponse(file_path)
-    
-    index = os.path.join(DIST_DIR, 'index.html')
-    if os.path.exists(index):
-        return FileResponse(index)
-    
-    return Response("<h1>Movie Night</h1><p>Frontend not found.</p>", status_code=404)
-
 
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
