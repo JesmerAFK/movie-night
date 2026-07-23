@@ -32,6 +32,23 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+@app.middleware("http")
+async def add_cors_headers(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return Response(
+            status_code=200,
+            headers={
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "*",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+    response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "*"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
+
 # Serve static frontend files (for bundled app)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DIST_DIR = os.path.join(BASE_DIR, '..', 'dist')
@@ -253,7 +270,7 @@ async def check_stream_type(
     try:
         stream_url = await _resolve_stream_url(title, quality, year, season, episode, is_tv)
         if not stream_url:
-            raise HTTPException(status_code=404, detail="Stream not found")
+            return {"transcoded": False, "accept_ranges": "bytes"}
 
         import shutil
         url_lower = stream_url.lower()
