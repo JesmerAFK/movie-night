@@ -1439,9 +1439,13 @@ const Player: React.FC<PlayerProps> = ({
                  if (pendingSeekTimeRef.current !== null) {
                    const seekTo = pendingSeekTimeRef.current;
                    pendingSeekTimeRef.current = null;
-                   if (videoRef.current) {
+                   if (videoRef.current && isFinite(seekTo) && seekTo > 0) {
                      console.log(`DEBUG: Applying pending seek to ${seekTo}s`);
-                     videoRef.current.currentTime = seekTo;
+                     try {
+                       videoRef.current.currentTime = seekTo;
+                     } catch (e) {
+                       console.warn("Pending seek error (ignoring):", e);
+                     }
                    }
                  }
                }}
