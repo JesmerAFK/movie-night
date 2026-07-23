@@ -1,3 +1,5 @@
-from moviebox_api.cli.interface import main
+import sys
 
-main()
+from moviebox_api.console import cli_entry
+
+sys.exit(cli_entry())

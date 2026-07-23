@@ -3,7 +3,7 @@ import Hls from 'hls.js';
 import {
   ArrowLeft, AlertCircle, WifiOff,
   Play, Pause, RotateCcw, RotateCw,
-  Volume2, VolumeX, Maximize, Languages, Users, Monitor, MonitorPlay, ChevronRight, Star, Info, Share2, Download, Check, Plus, Settings2, ExternalLink, Zap, X, Database
+  Volume2, VolumeX, Maximize, Languages, Users, Monitor, MonitorPlay, ChevronRight, Star, Info, Share2, Download, Check, Plus, Settings2, ExternalLink, Zap, X, Database, SkipForward
 } from 'lucide-react';
 import WatchTogether from './WatchTogether/WatchTogether';
 import { Movie } from '../types';
@@ -64,12 +64,13 @@ const Player: React.FC<PlayerProps> = ({
   onMovieChange,
   backendUrl = 'http://127.0.0.1:8000'
 }) => {
+  const computedIsSeries = !!(movie.first_air_date || (movie as any).seasons || movie.media_type === 'tv' || (movie.name && !movie.title));
   const [loading, setLoading] = useState(true);
   const [useEmbed, setUseEmbed] = useState(false);
   const [movieBoxId, setMovieBoxId] = useState<string | null>(null);
   const [streamUrls, setStreamUrls] = useState<{ quality: string, url: string }[]>([]);
   const [selectedStreamUrl, setSelectedStreamUrl] = useState<string>('');
-  const [errorType, setErrorType] = useState<'network' | 'format' | null>(null);
+  const [errorType, setErrorType] = useState<'network' | 'format' | 'BUSY' | null>(null);
 
   const [qualities, setQualities] = useState<string[]>([]);
   const [selectedQuality, setSelectedQuality] = useState<string>('');
@@ -80,7 +81,31 @@ const Player: React.FC<PlayerProps> = ({
   const [currentTime, setCurrentTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [showControls, setShowControls] = useState(true);
-  const [subSettings, setSubSettings] = useState({ fontSize: 16, bottom: 40, bgOpacity: 0.6 });
+  const [subSettings, setSubSettings] = useState(() => {
+    try {
+      const saved = localStorage.getItem('movie_night_sub_settings');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return {
+          fontSize: typeof parsed.fontSize === 'number' ? parsed.fontSize : 16,
+          bottom: typeof parsed.bottom === 'number' ? parsed.bottom : 40,
+          bgOpacity: typeof parsed.bgOpacity === 'number' ? parsed.bgOpacity : 0.6
+        };
+      }
+    } catch (e) {
+      console.error("Error reading subSettings from localStorage:", e);
+    }
+    return { fontSize: 16, bottom: 40, bgOpacity: 0.6 };
+  });
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('movie_night_sub_settings', JSON.stringify(subSettings));
+    } catch (e) {
+      console.error("Error saving subSettings to localStorage:", e);
+    }
+  }, [subSettings]);
+
   const [showSubSettings, setShowSubSettings] = useState(false);
   const [activeCue, setActiveCue] = useState<string>('');
 
@@ -108,7 +133,7 @@ const Player: React.FC<PlayerProps> = ({
   const controlsTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const bufferCheckTimeoutRef = useRef<NodeJS.Timeout | null>(null);
 
-  const [isSeries, setIsSeries] = useState(false);
+  const [isSeries, setIsSeries] = useState(computedIsSeries);
   const [availableSeasonsData, setAvailableSeasonsData] = useState<{ season: number, episodes_count: number }[]>([]);
   const [season, setSeason] = useState(initialSeason);
   const [episode, setEpisode] = useState(initialEpisode);
@@ -124,6 +149,8 @@ const Player: React.FC<PlayerProps> = ({
   const [selectedSeasonInPanel, setSelectedSeasonInPanel] = useState<number | null>(null);
   const [episodesInSeason, setEpisodesInSeason] = useState<number>(0);
   const [episodeSearch, setEpisodeSearch] = useState<string>('');
+  const [episodesDetails, setEpisodesDetails] = useState<any[]>([]);
+  const [isLoadingEpisodes, setIsLoadingEpisodes] = useState(false);
   const [videoZoom, setVideoZoom] = useState(1); // 1 = normal, >1 = zoomed in
   const [pinchStartDistance, setPinchStartDistance] = useState<number | null>(null);
   const [isSeeking, setIsSeeking] = useState(false);
@@ -138,22 +165,194 @@ const Player: React.FC<PlayerProps> = ({
   const longPressTimeout = useRef<NodeJS.Timeout | null>(null);
   const autoSwitchCooldown = useRef(false);
 
-  const titleToSearch = movie.title || movie.name || "";
+  // For TV series, search using the name directly (do not strip colon suffixes as they might be part of the show name)
+  const titleToSearch = computedIsSeries ? (movie.name || movie.title || "") : (movie.title || movie.name || "");
   const yearStr = movie.release_date?.split('-')[0] || movie.first_air_date?.split('-')[0];
   const year = yearStr ? parseInt(yearStr) : undefined;
 
-  const computedIsSeries = !!(movie.first_air_date || (movie as any).seasons || movie.media_type === 'tv' || (movie.name && !movie.title));
+  // Expected duration from TMDB (in seconds) — used when video.duration is unreliable (e.g. fragmented MP4 transcoding)
+  const [expectedDuration, setExpectedDuration] = useState<number>(0);
 
   const embedUrl = computedIsSeries
     ? `https://v2.vidsrc.me/embed/tv/${movie.id}/${season}/${episode}`
     : `https://v2.vidsrc.me/embed/movie/${movie.id}`;
 
+  const [hevcSupported, setHevcSupported] = useState(false);
+  const [isTranscodedStream, setIsTranscodedStream] = useState(false);
+  const [isTranscodeChecking, setIsTranscodeChecking] = useState(false);
+  const [transcodeStartTime, setTranscodeStartTime] = useState(0);
+  const historyResumedRef = useRef(false);
+  const pendingSeekTimeRef = useRef<number | null>(null);
+
+  // Detect HEVC support on mount
+  useEffect(() => {
+    try {
+      const video = document.createElement('video');
+      const supported = !!(
+        video.canPlayType('video/mp4; codecs="hvc1"') || 
+        video.canPlayType('video/mp4; codecs="hev1"')
+      );
+      setHevcSupported(supported);
+      console.log("DEBUG: HEVC native support detected:", supported);
+    } catch (e) {
+      console.error("DEBUG: HEVC support check failed:", e);
+    }
+  }, []);
+
   const isNative = Capacitor.isNativePlatform();
-  const currentUrl = selectedStreamUrl || (useEmbed ? embedUrl : '');
+
+  // Dynamic currentUrl builder that appends start_time and hevc supported params
+  const currentUrl = (() => {
+    if (useEmbed) return embedUrl;
+    if (!selectedStreamUrl) return '';
+    
+    if (selectedStreamUrl.includes('/api/stream')) {
+      let url = selectedStreamUrl;
+      url = url.replace(/[?&]start_time=[^&]*/g, '');
+      url = url.replace(/[?&]hevc=[^&]*/g, '');
+      
+      const separator = url.includes('?') ? '&' : '?';
+      const hevcParam = hevcSupported ? 'hevc=1' : 'hevc=0';
+      const startTimeParam = transcodeStartTime > 0 ? `&start_time=${transcodeStartTime}` : '';
+      return `${url}${separator}${hevcParam}${startTimeParam}`;
+    }
+    return selectedStreamUrl;
+  })();
+
+  // Abortable check to determine if the stream will be transcoded — uses lightweight /check endpoint
+  useEffect(() => {
+    if (!selectedStreamUrl || useEmbed) {
+      setIsTranscodedStream(false);
+      setIsTranscodeChecking(false);
+      return;
+    }
+    
+    if (selectedStreamUrl.includes('/api/stream')) {
+      const controller = new AbortController();
+      const checkTranscode = async () => {
+        setIsTranscodeChecking(true);
+        try {
+          // Use the lightweight /api/stream/check endpoint instead of fetching the full stream
+          const yearParam = year ? `&year=${year}` : '';
+          const hevcParam = hevcSupported ? 'hevc=1' : 'hevc=0';
+          const checkUrl = `${backendUrl}/api/stream/check?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}&${hevcParam}`;
+
+          const res = await fetch(checkUrl, { signal: controller.signal });
+          if (res.ok) {
+            const data = await res.json();
+            const isTranscoded = data.transcoded === true;
+            setIsTranscodedStream(isTranscoded);
+            console.log("DEBUG: Checked transcode status:", isTranscoded);
+          } else {
+            setIsTranscodedStream(false);
+            console.log("DEBUG: Checked transcode status: false (check endpoint failed)");
+          }
+        } catch (e) {
+          if (e.name !== 'AbortError') {
+            console.error("DEBUG: Failed to check transcode status:", e);
+          }
+          setIsTranscodedStream(false);
+        } finally {
+          setIsTranscodeChecking(false);
+        }
+      };
+      checkTranscode();
+      return () => controller.abort();
+    } else {
+      setIsTranscodedStream(false);
+      setIsTranscodeChecking(false);
+    }
+  }, [selectedStreamUrl, useEmbed, hevcSupported]);
+
+  const currentTimeRef = useRef(0);
+  useEffect(() => {
+    currentTimeRef.current = currentTime;
+  }, [currentTime]);
+
+  // Resume from history or preserve playhead on quality switch
+  useEffect(() => {
+    if (!selectedStreamUrl || isTranscodeChecking || useEmbed) return;
+
+    // Case 1: Initial load / history resume
+    if (!historyResumedRef.current) {
+      historyResumedRef.current = true;
+      try {
+        const history = getHistory();
+        const item = history.find(h =>
+          h.id === movie.id && (isSeries ? (h.season === season && h.episode === episode) : true)
+        );
+        if (item && item.timestamp > 10) {
+          console.log(`DEBUG: Resuming history at ${item.timestamp}s. Transcoded: ${isTranscodedStream}`);
+          if (isTranscodedStream) {
+            setTranscodeStartTime(item.timestamp);
+            setCurrentTime(item.timestamp);
+          } else {
+            pendingSeekTimeRef.current = item.timestamp;
+            setCurrentTime(item.timestamp);
+          }
+        } else {
+          setTranscodeStartTime(0);
+        }
+      } catch (e) {
+        console.error("DEBUG: History resume error:", e);
+      }
+    } 
+    // Case 2: Quality/source switch during playback
+    else {
+      const targetTime = currentTimeRef.current;
+      console.log(`DEBUG: Quality switch. Preserving playhead at ${targetTime}s. Transcoded: ${isTranscodedStream}`);
+      if (isTranscodedStream) {
+        setTranscodeStartTime(targetTime);
+      } else {
+        pendingSeekTimeRef.current = targetTime;
+        setTranscodeStartTime(0); // Reset transcode offset since it's now native seek
+      }
+    }
+  }, [isTranscodeChecking, selectedStreamUrl, isTranscodedStream, movie.id, season, episode, isSeries, useEmbed]);
 
   const currentSeasonData = availableSeasonsData.find(s => s.season === season);
-  const episodesCount = currentSeasonData ? currentSeasonData.episodes_count : 1;
+  const episodesCount = currentSeasonData ? currentSeasonData.episodes_count : 24;
   const episodeList = Array.from({ length: episodesCount }, (_, i) => i + 1);
+
+  // Next Episode logic
+  const hasNextEpisode = (() => {
+    if (!computedIsSeries) return false;
+    if (availableSeasonsData.length === 0) return true;
+    // Check if there's a next episode in the current season
+    if (episode < episodesCount) return true;
+    // Check if there's a next season
+    const sortedSeasons = [...availableSeasonsData].sort((a, b) => a.season - b.season);
+    const currentSeasonIndex = sortedSeasons.findIndex(s => s.season === season);
+    return currentSeasonIndex < sortedSeasons.length - 1;
+  })();
+
+  const handleNextEpisode = () => {
+    if (!hasNextEpisode) return;
+    triggerHaptic('MEDIUM');
+
+    // Reset playback position
+    if (videoRef.current) {
+      videoRef.current.currentTime = 0;
+    }
+
+    if (episode < episodesCount) {
+      // Next episode in the same season
+      setEpisode(episode + 1);
+    } else {
+      // Move to the first episode of the next season
+      const sortedSeasons = [...availableSeasonsData].sort((a, b) => a.season - b.season);
+      const currentSeasonIndex = sortedSeasons.findIndex(s => s.season === season);
+      if (currentSeasonIndex < sortedSeasons.length - 1) {
+        const nextSeason = sortedSeasons[currentSeasonIndex + 1];
+        setSeason(nextSeason.season);
+        setEpisode(1);
+      }
+    }
+
+    setLoading(true);
+    setIsPlaying(true);
+    setDownloadLinks([]); // Clear cached download links for the new episode
+  };
 
   // Consolidated orientation and subtitle track management
   useEffect(() => {
@@ -243,15 +442,21 @@ const Player: React.FC<PlayerProps> = ({
       setRetryCount(prev => prev + 1);
       setErrorType(null);
       setLoading(true);
+      if (videoRef.current) {
+        videoRef.current.load();
+        videoRef.current.play().catch(() => { });
+      }
     } else if (errorType && !useEmbed) {
       setUseEmbed(true);
       setErrorType(null);
+      setLoading(false);
     }
   }, [errorType, useEmbed, retryCount]);
 
   useEffect(() => {
     return () => {
       if (controlsTimeoutRef.current) clearTimeout(controlsTimeoutRef.current);
+      if (errorRetryTimeoutRef.current) clearTimeout(errorRetryTimeoutRef.current);
       if (Capacitor.isNativePlatform() && ScreenOrientation) {
         try { ScreenOrientation.unlock(); } catch (e) { }
       }
@@ -308,6 +513,52 @@ const Player: React.FC<PlayerProps> = ({
       toggleFullscreen();
     }
   }, [isLandscape]);
+
+  // Auto-select season when episode selector is opened
+  useEffect(() => {
+    if (showEpisodeSelector && selectedSeasonInPanel === null) {
+      handleSeasonSelect(season);
+    }
+  }, [showEpisodeSelector]);
+
+  // Fetch episode details from TMDB
+  useEffect(() => {
+    if (showEpisodeSelector && selectedSeasonInPanel !== null) {
+      const fetchEpisodes = async () => {
+        setIsLoadingEpisodes(true);
+        try {
+          const url = `${BASE_URL}/tv/${movie.id}/season/${selectedSeasonInPanel}?api_key=${API_KEY}`;
+          const res = await fetch(url);
+          if (res.ok) {
+            const data = await res.json();
+            if (data && data.episodes) {
+              setEpisodesDetails(data.episodes);
+              setIsLoadingEpisodes(false);
+              return;
+            }
+          }
+        } catch (err) {
+          console.error("Error fetching season details from TMDB:", err);
+        }
+        
+        // Fallback: build basic array using episodesInSeason
+        const fallbackCount = episodesInSeason || 24;
+        const fallbackList = Array.from({ length: fallbackCount }, (_, i) => ({
+          episode_number: i + 1,
+          name: `Episode ${i + 1}`,
+          overview: 'No description available.',
+          still_path: null,
+          runtime: null,
+        }));
+        setEpisodesDetails(fallbackList);
+        setIsLoadingEpisodes(false);
+      };
+      
+      fetchEpisodes();
+    } else {
+      setEpisodesDetails([]);
+    }
+  }, [showEpisodeSelector, selectedSeasonInPanel, movie.id, episodesInSeason]);
 
   const resetControlsTimer = () => {
     setShowControls(true);
@@ -561,8 +812,15 @@ const Player: React.FC<PlayerProps> = ({
     if (!isSwiping || useEmbed) return;
 
     if (swipeDirection === 'horizontal' && videoRef.current) {
-      const newTime = Math.max(0, Math.min(duration, currentTime + swipeAmount));
-      videoRef.current.currentTime = newTime;
+      const seekTime = Math.max(0, Math.min(displayDuration, currentTime + swipeAmount));
+      if (isTranscodedStream) {
+        setTranscodeStartTime(seekTime);
+        setCurrentTime(seekTime);
+        setLoading(true);
+      } else {
+        videoRef.current.currentTime = seekTime;
+        setCurrentTime(seekTime);
+      }
       triggerHaptic('MEDIUM');
     } else if (swipeDirection === 'vertical') {
       triggerHaptic('LIGHT');
@@ -608,13 +866,41 @@ const Player: React.FC<PlayerProps> = ({
   const skip = (amount: number) => {
     if (!videoRef.current) return;
     triggerHaptic('LIGHT');
-    videoRef.current.currentTime += amount;
+    
+    const targetTime = currentTime + amount;
+    const seekTime = Math.max(0, Math.min(displayDuration, targetTime));
+    
+    if (isTranscodedStream) {
+      setTranscodeStartTime(seekTime);
+      setCurrentTime(seekTime);
+      setLoading(true);
+    } else {
+      videoRef.current.currentTime = seekTime;
+      setCurrentTime(seekTime);
+    }
+    setTimeout(syncSubtitles, 50);
   };
+
+  // Compute a reliable display duration: prefer video.duration if it looks correct, fall back to TMDB runtime
+  const displayDuration = (() => {
+    // If video reports a reasonable finite duration (> 2 minutes), trust it
+    if (duration > 0 && isFinite(duration) && duration > 120) return duration;
+    // Otherwise use TMDB expected duration if available
+    if (expectedDuration > 0) return expectedDuration;
+    // Last resort: use whatever video reports
+    return duration;
+  })();
 
   const handleTimeUpdate = () => {
     if (videoRef.current && !isSeeking) {
-      setCurrentTime(videoRef.current.currentTime);
-      setDuration(videoRef.current.duration);
+      const videoTime = videoRef.current.currentTime;
+      setCurrentTime(videoTime + transcodeStartTime);
+      
+      const reportedDuration = videoRef.current.duration;
+      // Only update state duration if the video reports something reasonable and it's not transcoded
+      if (isFinite(reportedDuration) && reportedDuration > 0 && !isTranscodedStream) {
+        setDuration(reportedDuration);
+      }
 
       // Robust subtitle sync: Fallback for when oncuechange doesn't fire
       const video = videoRef.current;
@@ -633,15 +919,49 @@ const Player: React.FC<PlayerProps> = ({
     }
   };
 
+  const syncSubtitles = () => {
+    if (!videoRef.current) return;
+    const video = videoRef.current;
+    const activeTracks = (Array.from(video.textTracks) as TextTrack[]).filter(t => t.mode !== 'disabled');
+    if (activeTracks.length > 0) {
+      const track = activeTracks[0];
+      if (track.activeCues && track.activeCues.length > 0) {
+        const text = Array.from(track.activeCues)
+          .map((cue: any) => cue.text || '')
+          .join('\n');
+        setActiveCue(prev => prev !== text ? text : prev);
+      } else {
+        setActiveCue(prev => prev !== '' ? '' : prev);
+      }
+    } else {
+      setActiveCue(prev => prev !== '' ? '' : prev);
+    }
+  };
+
+  const errorRetryTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+
   const onPlayerError = () => {
-    console.warn("Player Error detected. Attempting next mirror/quality.");
-    // If we have more qualities, try the next one
-    const currentIndex = streamUrls.findIndex(s => s.url === selectedStreamUrl);
-    if (currentIndex !== -1 && currentIndex < streamUrls.length - 1) {
-      setSelectedStreamUrl(streamUrls[currentIndex + 1].url);
-      setSelectedQuality(streamUrls[currentIndex + 1].quality);
+    // Prevent rapid-fire retry loops by adding exponential backoff
+    if (errorRetryTimeoutRef.current) {
+      // Already waiting for a retry, don't stack another one
       return;
     }
+
+    const currentIndex = streamUrls.findIndex(s => s.url === selectedStreamUrl);
+    if (currentIndex !== -1 && currentIndex < streamUrls.length - 1) {
+      // Add exponential backoff: 2s, 4s, 8s based on retry count
+      const delay = Math.min(2000 * Math.pow(2, retryCount), 10000);
+      console.warn(`Player Error detected. Retrying next mirror/quality in ${delay}ms (retry ${retryCount + 1})...`);
+      setRetryCount(prev => prev + 1);
+      
+      errorRetryTimeoutRef.current = setTimeout(() => {
+        errorRetryTimeoutRef.current = null;
+        setSelectedStreamUrl(streamUrls[currentIndex + 1].url);
+        setSelectedQuality(streamUrls[currentIndex + 1].quality);
+      }, delay);
+      return;
+    }
+    console.warn("Player Error: All mirrors exhausted.");
     setErrorType('BUSY');
     setLoading(false);
   };
@@ -658,19 +978,56 @@ const Player: React.FC<PlayerProps> = ({
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
     const time = Number(e.target.value);
     setCurrentTime(time);
-    if (videoRef.current) {
+    if (!isTranscodedStream && videoRef.current) {
       videoRef.current.currentTime = time;
     }
     resetControlsTimer();
+    syncSubtitles();
   };
 
   const handleSeekStart = () => {
     setIsSeeking(true);
   };
 
-  const handleSeekEnd = () => {
+  const handleSeekEnd = (e: React.SyntheticEvent<HTMLInputElement>) => {
+    // Ensure the video seeks to the final position on mouse/touch release
+    const time = Number((e.target as HTMLInputElement).value);
+    if (isTranscodedStream) {
+      setTranscodeStartTime(time);
+      setCurrentTime(time);
+      setLoading(true);
+    } else {
+      if (videoRef.current) {
+        videoRef.current.currentTime = time;
+      }
+      setCurrentTime(time);
+    }
     setIsSeeking(false);
     resetControlsTimer();
+    setTimeout(syncSubtitles, 50);
+  };
+
+  // Handle direct click on the seek bar (not drag)
+  const handleSeekBarClick = (e: React.MouseEvent<HTMLInputElement>) => {
+    e.stopPropagation();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const clickX = e.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const seekTime = percentage * displayDuration;
+    if (displayDuration > 0) {
+      if (isTranscodedStream) {
+        setTranscodeStartTime(seekTime);
+        setCurrentTime(seekTime);
+        setLoading(true);
+      } else {
+        if (videoRef.current) {
+          videoRef.current.currentTime = seekTime;
+        }
+        setCurrentTime(seekTime);
+      }
+    }
+    resetControlsTimer();
+    setTimeout(syncSubtitles, 50);
   };
 
   useEffect(() => {
@@ -685,22 +1042,40 @@ const Player: React.FC<PlayerProps> = ({
     fetchSimilar();
   }, [movie.id]);
 
+  // Fetch expected runtime from TMDB details
+  useEffect(() => {
+    const fetchRuntime = async () => {
+      try {
+        const type = computedIsSeries ? 'tv' : 'movie';
+        const res = await fetch(`${BASE_URL}/${type}/${movie.id}?api_key=${API_KEY}`);
+        const data = await res.json();
+        if (data.runtime) {
+          // Movies: runtime in minutes
+          setExpectedDuration(data.runtime * 60);
+        } else if (data.episode_run_time && data.episode_run_time.length > 0) {
+          // TV shows: average episode runtime
+          setExpectedDuration(data.episode_run_time[0] * 60);
+        } else if (data.last_episode_to_air?.runtime) {
+          setExpectedDuration(data.last_episode_to_air.runtime * 60);
+        }
+      } catch (err) {
+        console.error("Runtime fetch error:", err);
+      }
+    };
+    fetchRuntime();
+  }, [movie.id, computedIsSeries]);
+
   useEffect(() => {
     setSeason(initialSeason);
     setEpisode(initialEpisode);
-    setIsSeries(false);
+    setIsSeries(computedIsSeries);
     setAvailableSeasonsData([]);
     setErrorType(null);
     setLoading(true);
-  }, [movie.id, initialSeason, initialEpisode]);
-
-  useEffect(() => {
-    // Rely on TMDB for metadata since we already have it in the 'movie' prop
-    const detectedSeries = !!(movie.first_air_date || (movie as any).seasons || movie.media_type === 'tv' || (movie.name && !movie.title));
-    if (detectedSeries) {
-      setIsSeries(true);
-    }
-  }, [movie.id]);
+    setTranscodeStartTime(0);
+    setIsTranscodedStream(false);
+    historyResumedRef.current = false;
+  }, [movie.id, initialSeason, initialEpisode, computedIsSeries]);
 
   useEffect(() => {
     if (!titleToSearch) return;
@@ -708,9 +1083,10 @@ const Player: React.FC<PlayerProps> = ({
 
     // 1. Get Clean Backend Stream (Vidsrc/Proxy)
     const fetchDirect = async () => {
+      const yearParam = year ? `&year=${year}` : '';
       try {
         console.log("DEBUG: Setting Backend Stream...");
-        const backendStreamUrl = `${backendUrl}/api/stream?id=${movie.id}&title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}`;
+        const backendStreamUrl = `${backendUrl}/api/stream?id=${movie.id}&title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}`;
 
         // We set the backend as our first source. If it fails, standard React error handling will kick in.
         setStreamUrls([{ quality: 'Auto (Clean)', url: backendStreamUrl }]);
@@ -724,17 +1100,17 @@ const Player: React.FC<PlayerProps> = ({
 
       // Fetch qualities from backend
       try {
-        const qualUrl = `${backendUrl}/api/qualities?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}`;
+        const qualUrl = `${backendUrl}/api/qualities?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}`;
         const qualRes = await fetch(qualUrl);
         if (qualRes.ok) {
           const qualData = await qualRes.json();
           if (Array.isArray(qualData) && qualData.length > 0) {
             const formattedQualities = qualData.map((q: string) => ({
               quality: q,
-              url: `${backendUrl}/api/stream?title=${encodeURIComponent(titleToSearch)}&quality=${encodeURIComponent(q)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}`
+              url: `${backendUrl}/api/stream?title=${encodeURIComponent(titleToSearch)}&quality=${encodeURIComponent(q)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}`
             }));
             // Prepend Auto option
-            formattedQualities.unshift({ quality: 'Auto (Clean)', url: `${backendUrl}/api/stream?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}` });
+            formattedQualities.unshift({ quality: 'Auto (Clean)', url: `${backendUrl}/api/stream?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}` });
             setStreamUrls(formattedQualities);
             setQualities(formattedQualities.map(q => q.quality));
           }
@@ -743,7 +1119,7 @@ const Player: React.FC<PlayerProps> = ({
 
       // Fetch subtitles from backend separately
       try {
-        const subsUrl = `${backendUrl}/api/subtitles?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}`;
+        const subsUrl = `${backendUrl}/api/subtitles?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}`;
         const subsRes = await fetch(subsUrl);
         if (subsRes.ok) {
           const subsData = await subsRes.json();
@@ -754,10 +1130,26 @@ const Player: React.FC<PlayerProps> = ({
               url: `${backendUrl}/api/subtitles/proxy?url=${encodeURIComponent(s.url)}`
             }));
             setSubtitles(proxiedSubs);
-            // Auto-select English subtitle if available
-            const englishSub = proxiedSubs.find((s: any) => s.language.toLowerCase().includes('english'));
-            if (englishSub) {
-              setSelectedSubtitle(englishSub.url);
+            // Check preferred subtitle language
+            let preferredLang = 'english';
+            try {
+              const saved = localStorage.getItem('movie_night_preferred_subtitle_lang');
+              if (saved) preferredLang = saved.toLowerCase();
+            } catch (e) {}
+
+            if (preferredLang === 'off') {
+              setSelectedSubtitle('');
+            } else {
+              const matchedSub = proxiedSubs.find((s: any) => s.language.toLowerCase().includes(preferredLang));
+              if (matchedSub) {
+                setSelectedSubtitle(matchedSub.url);
+              } else {
+                // Fallback to English
+                const englishSub = proxiedSubs.find((s: any) => s.language.toLowerCase().includes('english'));
+                if (englishSub) {
+                  setSelectedSubtitle(englishSub.url);
+                }
+              }
             }
           }
         }
@@ -774,8 +1166,9 @@ const Player: React.FC<PlayerProps> = ({
     if (!computedIsSeries || !titleToSearch) return;
     
     const fetchTVMeta = async () => {
+      const yearParam = year ? `&year=${year}` : '';
       try {
-        const url = `${backendUrl}/api/tv/metadata?title=${encodeURIComponent(titleToSearch)}`;
+        const url = `${backendUrl}/api/metadata?title=${encodeURIComponent(titleToSearch)}${yearParam}`;
         const res = await fetch(url);
         if (res.ok) {
           const data = await res.json();
@@ -796,13 +1189,23 @@ const Player: React.FC<PlayerProps> = ({
   }, [titleToSearch, computedIsSeries, backendUrl]);
 
   useEffect(() => {
-    if (!videoRef.current || useEmbed || !selectedQuality || !currentUrl) return;
+    if (!videoRef.current || useEmbed || !selectedQuality || !currentUrl || isTranscodeChecking) return;
     const video = videoRef.current;
 
-    // Auto-select English sub if none selected
-    if (subtitles.length > 0 && !selectedSubtitle) {
-      const eng = subtitles.find(s => s.language.toLowerCase().includes('english')) || subtitles[0];
-      setSelectedSubtitle(eng.url);
+    // Check preferred subtitle language
+    let preferredLang = 'english';
+    try {
+      const saved = localStorage.getItem('movie_night_preferred_subtitle_lang');
+      if (saved) preferredLang = saved.toLowerCase();
+    } catch (e) {}
+
+    if (preferredLang === 'off') {
+      if (selectedSubtitle) setSelectedSubtitle('');
+    } else if (subtitles.length > 0 && !selectedSubtitle) {
+      const matchedSub = subtitles.find(s => s.language.toLowerCase().includes(preferredLang)) || 
+                         subtitles.find(s => s.language.toLowerCase().includes('english')) || 
+                         subtitles[0];
+      setSelectedSubtitle(matchedSub.url);
     }
 
     // Cleanup previous HLS instance
@@ -869,27 +1272,10 @@ const Player: React.FC<PlayerProps> = ({
 
     video.load();
 
-    // Resume from history
-    try {
-      const history = getHistory();
-      const item = history.find(h =>
-        h.id === movie.id && (isSeries ? (h.season === season && h.episode === episode) : true)
-      );
-      if (item && item.timestamp > 0) {
-        const setTime = () => {
-          video.currentTime = item.timestamp;
-          video.removeEventListener('loadedmetadata', setTime);
-        };
-        video.addEventListener('loadedmetadata', setTime);
-        // Also try immediately if already loaded
-        if (video.readyState >= 1) {
-          video.currentTime = item.timestamp;
-        }
-      }
-    } catch (e) { }
+    // Note: History resume is handled by the dedicated useEffect when transcode status is ready.
 
     video.play().catch(() => { });
-  }, [currentUrl, useEmbed]);
+  }, [currentUrl, useEmbed, isTranscodeChecking]);
 
 
   useEffect(() => {
@@ -966,13 +1352,38 @@ const Player: React.FC<PlayerProps> = ({
       }
       lastTapRef.current = null;
     } else {
-      // Single tap - just show controls
+      // Single tap - toggle controls
       lastTapRef.current = { time: now, x: clientX };
-      resetControlsTimer();
+      if (showControls) {
+        setShowControls(false);
+      } else {
+        resetControlsTimer();
+      }
     }
   };
 
   const renderVideoPlayer = () => {
+    const isNotReleased = (() => {
+      const dateStr = movie.release_date || movie.first_air_date;
+      if (!dateStr) return false;
+      const releaseDate = new Date(dateStr);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      return releaseDate > today;
+    })();
+
+    if (isNotReleased) {
+      return (
+        <div className="absolute inset-0 bg-[#070707] flex flex-col items-center justify-center p-6 text-center z-50">
+          <Info className="w-16 h-16 text-[#e50914] mb-4 animate-bounce" />
+          <h2 className="text-2xl md:text-4xl font-black text-white mb-2 uppercase tracking-tight">Coming Soon</h2>
+          <p className="text-white/60 text-xs md:text-sm max-w-md uppercase tracking-widest leading-relaxed">
+            "{movie.title || movie.name}" is scheduled to premiere on <span className="text-[#e50914] font-bold">{new Date(movie.release_date || movie.first_air_date || '').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}</span>.
+          </p>
+        </div>
+      );
+    }
+
     return (
       <div
         className={`relative w-full overflow-hidden bg-black flex items-center justify-center group ${isLandscape ? 'h-full flex-1' : 'aspect-video'}`}
@@ -984,15 +1395,18 @@ const Player: React.FC<PlayerProps> = ({
         {!useEmbed && (
           <>
             <div
-              className="absolute inset-y-0 left-0 w-[35%] z-30"
+              className="absolute top-0 left-0 w-[35%] z-30"
+              style={{ bottom: '80px' }}
               onClick={(e) => handleDoubleTap(e, 'left')}
             />
             <div
-              className="absolute inset-y-0 right-0 w-[35%] z-30"
+              className="absolute top-0 right-0 w-[35%] z-30"
+              style={{ bottom: '80px' }}
               onClick={(e) => handleDoubleTap(e, 'right')}
             />
             <div
-              className="absolute inset-y-0 left-[35%] right-[35%] z-30 flex items-center justify-center"
+              className="absolute top-0 left-[35%] right-[35%] z-30 flex items-center justify-center"
+              style={{ bottom: '80px' }}
               onClick={(e) => handleDoubleTap(e, 'center')}
             />
           </>
@@ -1008,38 +1422,50 @@ const Player: React.FC<PlayerProps> = ({
           />
         ) : (
           <>
-            <video
-              key={currentUrl}
-              ref={videoRef}
-              className="w-full h-full object-contain transition-transform duration-200"
-              style={{ transform: `scale(${videoZoom})` }}
-              playsInline
-              preload="auto"
-              onCanPlay={() => {
-                setLoading(false);
-                setIsBuffering(false);
-                setErrorType(null);
-                setRetryCount(0);
-                if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
-              }}
-              onWaiting={() => {
-                // Only show buffering indicator if it actually takes a while (800ms)
-                if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
-                bufferingTimeoutRef.current = setTimeout(() => {
-                  setIsBuffering(true);
-                }, 800);
-              }}
-              onPlaying={() => {
-                setIsPlaying(true);
-                setLoading(false);
-                setIsBuffering(false);
-                if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
-              }}
-              onPause={() => setIsPlaying(false)}
-              onTimeUpdate={handleTimeUpdate}
-              onError={onPlayerError}
-              crossOrigin={selectedSubtitle ? "anonymous" : undefined}
-            >
+<video
+               key={isTranscodeChecking ? 'checking-transcode' : currentUrl}
+               ref={videoRef}
+               className="w-full h-full object-contain transition-transform duration-200"
+               style={{ transform: `scale(${videoZoom})` }}
+               playsInline
+               preload="auto"
+               onCanPlay={() => {
+                 setLoading(false);
+                 setIsBuffering(false);
+                 setErrorType(null);
+                 setRetryCount(0);
+                 if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
+                 if (pendingSeekTimeRef.current !== null) {
+                   const seekTo = pendingSeekTimeRef.current;
+                   pendingSeekTimeRef.current = null;
+                   if (videoRef.current) {
+                     console.log(`DEBUG: Applying pending seek to ${seekTo}s`);
+                     videoRef.current.currentTime = seekTo;
+                   }
+                 }
+               }}
+               onWaiting={() => {
+                 // Only show buffering indicator if it actually takes a while (800ms)
+                 if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
+                 bufferingTimeoutRef.current = setTimeout(() => {
+                   setIsBuffering(true);
+                 }, 800);
+               }}
+               onPlaying={() => {
+                 setIsPlaying(true);
+                 setLoading(false);
+                 setIsBuffering(false);
+                 if (bufferingTimeoutRef.current) clearTimeout(bufferingTimeoutRef.current);
+               }}
+               onPause={() => { setIsPlaying(false); syncSubtitles(); }}
+               onSeeked={syncSubtitles}
+               onTimeUpdate={handleTimeUpdate}
+               onError={onPlayerError}
+               onLoadedMetadata={() => {
+                 if (videoRef.current) setDuration(videoRef.current.duration);
+               }}
+               crossOrigin={selectedSubtitle ? "anonymous" : undefined}
+             >
               {selectedSubtitle && (
                 <track
                   key={selectedSubtitle}
@@ -1106,7 +1532,7 @@ const Player: React.FC<PlayerProps> = ({
               </div>
             )}
 
-            {(loading || isBuffering) && !errorType && (
+            {(loading || isBuffering) && !errorType && !useEmbed && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/60 backdrop-blur-[2px] z-20 transition-all duration-500">
                 <div className="relative">
                   <div className="w-12 h-12 rounded-full border-2 border-white/5" />
@@ -1138,9 +1564,27 @@ const Player: React.FC<PlayerProps> = ({
               </div>
             )}
 
-            <div className={`absolute inset-0 z-40 flex flex-col justify-between transition-opacity duration-300 ${showControls && !showPauseInfo ? 'opacity-100' : 'opacity-0 pointer-events-none'}`}>
+            {/* Skip Intro Button */}
+            {isPlaying && currentTime >= 10 && currentTime <= 90 && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  triggerHaptic('MEDIUM');
+                  if (videoRef.current) {
+                    videoRef.current.currentTime = 90;
+                    setCurrentTime(90);
+                  }
+                }}
+                className="absolute bottom-24 right-8 z-[60] bg-black/80 hover:bg-black/95 text-white border border-white/20 hover:border-white/40 px-5 py-2.5 rounded shadow-2xl flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 duration-200 cursor-pointer text-xs font-black uppercase tracking-wider"
+              >
+                <SkipForward className="w-3.5 h-3.5 fill-white" />
+                <span>Skip Intro</span>
+              </button>
+            )}
+
+            <div className={`pointer-events-none absolute inset-0 z-40 flex flex-col justify-between transition-opacity duration-300 ${showControls && !showPauseInfo ? 'opacity-100' : 'opacity-0'}`}>
               {/* Top Bar - Netflix Style */}
-              <div className={`p-4 flex items-center justify-between transition-all duration-300 ${isLandscape ? 'pt-12 pl-12 pr-12' : 'pt-[max(1rem,env(safe-area-inset-top))]'}`}>
+              <div className={`pointer-events-none ${showControls && !showPauseInfo ? 'pointer-events-auto' : ''} p-4 flex items-center justify-between transition-all duration-300 ${isLandscape ? 'pt-12 pl-12 pr-12' : 'pt-[max(1rem,env(safe-area-inset-top))]'}`}>
                 <button onClick={(e) => { e.stopPropagation(); onBack(); }} className="p-2 active:scale-95 transition-all text-white">
                   <ArrowLeft className="w-6 h-6" />
                 </button>
@@ -1196,13 +1640,20 @@ const Player: React.FC<PlayerProps> = ({
 
               {/* Subtitle Selector Dropdown */}
               {showSubSelector && (
-                <div className="absolute top-20 right-4 w-64 bg-black/95 backdrop-blur-2xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 z-[100]">
+                <div className={`pointer-events-none ${showControls && !showPauseInfo ? 'pointer-events-auto' : ''} absolute top-20 right-4 w-64 bg-black/95 backdrop-blur-2xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 z-[100]`}>
                   <div className="p-3 border-b border-white/5">
                     <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider">Subtitles</span>
                   </div>
                   <div className="max-h-[300px] overflow-y-auto">
                     <button
-                      onClick={() => { setSelectedSubtitle(''); setActiveCue(''); setShowSubSelector(false); }}
+                      onClick={() => {
+                        setSelectedSubtitle('');
+                        setActiveCue('');
+                        setShowSubSelector(false);
+                        try {
+                          localStorage.setItem('movie_night_preferred_subtitle_lang', 'off');
+                        } catch (e) {}
+                      }}
                       className={`w-full px-4 py-3 text-left transition-colors ${!selectedSubtitle ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5'}`}
                     >
                       <span className="text-sm">Off</span>
@@ -1214,7 +1665,13 @@ const Player: React.FC<PlayerProps> = ({
                         return (
                           <button
                             key={s.url}
-                            onClick={() => { setSelectedSubtitle(proxied); setShowSubSelector(false); }}
+                            onClick={() => {
+                              setSelectedSubtitle(proxied);
+                              setShowSubSelector(false);
+                              try {
+                                localStorage.setItem('movie_night_preferred_subtitle_lang', s.language);
+                              } catch (e) {}
+                            }}
                             className={`w-full px-4 py-3 text-left transition-colors ${active ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5'}`}
                           >
                             <span className="text-sm">{s.language}</span>
@@ -1232,7 +1689,7 @@ const Player: React.FC<PlayerProps> = ({
 
               {/* Quality Selector Dropdown */}
               {showQualitySelector && (
-                <div className="absolute top-20 right-4 w-56 bg-black/95 backdrop-blur-2xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 z-[100]">
+                <div className={`pointer-events-none ${showControls && !showPauseInfo ? 'pointer-events-auto' : ''} absolute top-20 right-4 w-56 bg-black/95 backdrop-blur-2xl rounded-2xl border border-white/10 overflow-hidden shadow-2xl animate-in fade-in slide-in-from-top-2 duration-200 z-[100]`}>
                   <div className="p-3 border-b border-white/5">
                     <span className="text-[10px] font-bold text-white/60 uppercase tracking-wider">Quality / Source</span>
                   </div>
@@ -1294,7 +1751,7 @@ const Player: React.FC<PlayerProps> = ({
               )}
 
               {/* Center Play Controls - Absolute Center of Screen */}
-              <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center space-x-12 z-50">
+              <div className={`pointer-events-none ${showControls && !showPauseInfo ? 'pointer-events-auto' : ''} absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex items-center justify-center space-x-12 z-50`}>
                 <button
                   onClick={(e) => { e.stopPropagation(); skip(-10); handleMouseMove(); }}
                   className="active:scale-90 transition-all flex items-center justify-center relative w-12 h-12 text-white/90 hover:text-white"
@@ -1319,7 +1776,7 @@ const Player: React.FC<PlayerProps> = ({
                 </button>
               </div>
 
-              <div className="absolute bottom-0 left-0 right-0 px-5 py-4 bg-gradient-to-t from-black/90 via-black/40 to-transparent" style={{ paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + 24px)` }}>
+              <div className={`pointer-events-none ${showControls && !showPauseInfo ? 'pointer-events-auto' : ''} absolute bottom-0 left-0 right-0 px-5 py-4 bg-gradient-to-t from-black/90 via-black/40 to-transparent`} style={{ paddingBottom: `calc(env(safe-area-inset-bottom, 0px) + 24px)` }}>
                 <div className="flex flex-col space-y-3">
                   {/* Seek Bar */}
                   <div className="relative h-[16px] cursor-pointer flex items-center group">
@@ -1329,27 +1786,28 @@ const Player: React.FC<PlayerProps> = ({
                     {/* Red Progress Line - Watched Portion */}
                     <div
                       className="absolute h-[4px] bg-[#E50914] z-10 rounded-full pointer-events-none transition-all duration-100 group-hover:h-[6px]"
-                      style={{ width: `${duration > 0 ? (currentTime / duration) * 100 : 0}%` }}
+                      style={{ width: `${displayDuration > 0 ? (currentTime / displayDuration) * 100 : 0}%` }}
                     />
 
                     {/* Red Circle Thumb */}
                     <div
                       className={`absolute top-1/2 -translate-y-1/2 w-4 h-4 bg-[#E50914] rounded-full z-20 pointer-events-none shadow-lg ${isSeeking ? 'scale-150' : 'scale-100'} group-hover:scale-125 transition-all duration-150`}
-                      style={{ left: `${duration > 0 ? (currentTime / duration) * 100 : 0}%`, transform: 'translateX(-50%) translateY(-50%)' }}
+                      style={{ left: `${displayDuration > 0 ? (currentTime / displayDuration) * 100 : 0}%`, transform: 'translateX(-50%) translateY(-50%)' }}
                     />
 
                     <input
                       type="range"
                       min={0}
-                      max={duration || 0}
+                      max={displayDuration || 0}
                       step={0.1}
                       value={currentTime}
+                      onInput={(e) => { e.stopPropagation(); handleSeek(e as any); }}
                       onChange={(e) => { e.stopPropagation(); handleSeek(e); }}
-                      onMouseDown={handleSeekStart}
-                      onMouseUp={handleSeekEnd}
-                      onTouchStart={handleSeekStart}
-                      onTouchEnd={handleSeekEnd}
-                      onClick={(e) => { e.stopPropagation(); }}
+                      onMouseDown={(e) => { e.stopPropagation(); handleSeekStart(); }}
+                      onMouseUp={(e) => { e.stopPropagation(); handleSeekEnd(e); }}
+                      onTouchStart={(e) => { e.stopPropagation(); handleSeekStart(); }}
+                      onTouchEnd={(e) => { e.stopPropagation(); handleSeekEnd(e); }}
+                      onClick={handleSeekBarClick}
                       className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-30"
                     />
                   </div>
@@ -1359,7 +1817,7 @@ const Player: React.FC<PlayerProps> = ({
                     {/* Left: Timestamp + Fullscreen */}
                     <div className="flex items-center space-x-3">
                       <span className="player-timestamp text-xs font-medium text-white/90 tabular-nums">
-                        {formatTime(currentTime)} / {formatTime(duration)}
+                        {formatTime(currentTime)} / {formatTime(displayDuration)}
                       </span>
                       <button
                         onClick={(e) => { e.stopPropagation(); toggleFullscreen(); handleMouseMove(); }}
@@ -1369,9 +1827,18 @@ const Player: React.FC<PlayerProps> = ({
                       </button>
                     </div>
 
-                    {/* Right: Episodes Button Only */}
+                    {/* Right: Next Episode + Episodes Button */}
                     <div className="flex items-center space-x-3">
-                      {isSeries && (
+                      {computedIsSeries && hasNextEpisode && (
+                        <button
+                          onClick={(e) => { e.stopPropagation(); handleNextEpisode(); }}
+                          className="flex items-center space-x-1.5 text-white/80 hover:text-white transition-all active:scale-95 group"
+                        >
+                          <SkipForward className="w-4 h-4 group-hover:text-[#E50914] transition-colors" />
+                          <span className="text-xs font-medium">Next Episode</span>
+                        </button>
+                      )}
+                      {computedIsSeries && (
                         <button
                           onClick={(e) => { e.stopPropagation(); setShowEpisodeSelector(!showEpisodeSelector); }}
                           className="flex items-center space-x-1.5 text-white/80 hover:text-white transition-all active:scale-95"
@@ -1390,68 +1857,159 @@ const Player: React.FC<PlayerProps> = ({
 
             {/* Episode Selector Modal */}
             {showEpisodeSelector && isSeries && (
-              <div className="absolute inset-0 z-50 bg-black/95 backdrop-blur-md flex items-center justify-center p-4" onClick={() => { setShowEpisodeSelector(false); setSelectedSeasonInPanel(null); setEpisodesInSeason(0); setEpisodeSearch(''); }}>
-                <div className="w-full max-w-xs h-[25vh] flex flex-col bg-[#0f0f0f] rounded-lg overflow-hidden border border-white/10 shadow-2xl animate-in fade-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
-                  {/* Header with Close and Search */}
-                  <div className="flex items-center gap-1.5 p-1 border-b border-white/5 bg-white/5">
-                    <input
-                      type="text"
-                      placeholder="Search..."
-                      value={episodeSearch}
-                      onChange={(e) => setEpisodeSearch(e.target.value)}
-                      onClick={(e) => e.stopPropagation()}
-                      className="flex-1 bg-black/40 border border-white/10 rounded px-1.5 py-0.5 text-[8px] text-white placeholder-white/20 focus:outline-none focus:border-red-600"
-                    />
-                    <button
-                      onClick={() => { setShowEpisodeSelector(false); setSelectedSeasonInPanel(null); setEpisodesInSeason(0); setEpisodeSearch(''); }}
-                      className="p-1 text-white/30 hover:text-white transition-colors"
-                    >
-                      <X className="w-3 h-3" />
-                    </button>
+              <div
+                className="absolute inset-0 z-50 bg-black/85 backdrop-blur-md flex items-center justify-center p-4 md:p-8"
+                onClick={() => {
+                  setShowEpisodeSelector(false);
+                  setSelectedSeasonInPanel(null);
+                  setEpisodesInSeason(0);
+                  setEpisodeSearch('');
+                }}
+              >
+                <div
+                  className="w-full max-w-4xl h-[80vh] flex flex-col bg-[#141414] rounded-2xl overflow-hidden border border-white/10 shadow-2xl animate-in fade-in zoom-in-95 duration-300"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {/* Header: Title + Season Select Dropdown + Search + Close */}
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between p-6 border-b border-white/15 gap-4 bg-[#181818]">
+                    <div className="flex items-center space-x-4">
+                      <h3 className="text-white font-black text-xl tracking-tight hidden sm:inline-block">
+                        {movie.title || movie.name}
+                      </h3>
+                      {/* Season Dropdown */}
+                      <div className="relative">
+                        <select
+                          value={selectedSeasonInPanel || season}
+                          onChange={(e) => handleSeasonSelect(Number(e.target.value))}
+                          className="bg-[#242424] text-white text-sm font-bold py-2.5 px-5 pr-10 rounded border border-white/20 focus:outline-none focus:border-[#E50914] cursor-pointer appearance-none transition-colors"
+                        >
+                          {availableSeasonsData.map((s) => (
+                            <option key={s.season} value={s.season}>
+                              Season {s.season}
+                            </option>
+                          ))}
+                        </select>
+                        <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-white/60">
+                          <ChevronRight className="w-4 h-4 rotate-90" />
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center space-x-3">
+                      <input
+                        type="text"
+                        placeholder="Filter episodes..."
+                        value={episodeSearch}
+                        onChange={(e) => setEpisodeSearch(e.target.value)}
+                        className="bg-black/60 border border-white/10 rounded-lg px-4 py-2 text-xs text-white placeholder-white/30 focus:outline-none focus:border-[#E50914] w-full sm:w-48 transition-colors"
+                      />
+                      <button
+                        onClick={() => {
+                          setShowEpisodeSelector(false);
+                          setSelectedSeasonInPanel(null);
+                          setEpisodesInSeason(0);
+                          setEpisodeSearch('');
+                        }}
+                        className="p-2 text-white/60 hover:text-white transition-colors bg-white/5 rounded-full hover:bg-white/10 flex-shrink-0"
+                      >
+                        <X className="w-5 h-5" />
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Content: Seasons and Episodes */}
-                  <div className="flex flex-1 overflow-hidden">
-                    {/* Left Column: Seasons */}
-                    <div className="w-1/4 bg-black/20 border-r border-white/5 overflow-y-auto no-scrollbar">
-                      <div className="p-0.5">
-                        {availableSeasonsData.map((seasonData) => (
-                          <button
-                            key={seasonData.season}
-                            onClick={() => handleSeasonSelect(seasonData.season)}
-                            className={`w-full text-center py-2 rounded-sm text-[9px] mb-0.5 transition-all ${selectedSeasonInPanel === seasonData.season ? 'bg-red-600 text-white font-black' : 'text-white/40 hover:bg-white/5'}`}
-                          >
-                            S{seasonData.season}
-                          </button>
-                        ))}
+                  {/* Episodes List Container */}
+                  <div className="flex-1 overflow-y-auto p-6 space-y-4 no-scrollbar bg-[#141414]">
+                    {isLoadingEpisodes ? (
+                      <div className="h-full flex flex-col items-center justify-center py-20">
+                        <div className="relative w-12 h-12">
+                          <div className="w-12 h-12 rounded-full border-2 border-white/5" />
+                          <div className="absolute inset-0 w-12 h-12 rounded-full border-2 border-t-[#e50914] animate-spin" />
+                        </div>
+                        <p className="text-white/40 text-[9px] uppercase tracking-widest mt-4 animate-pulse">Loading Episodes</p>
                       </div>
-                    </div>
+                    ) : episodesDetails && episodesDetails.length > 0 ? (
+                      episodesDetails
+                        .filter((ep) => {
+                          const searchTerm = episodeSearch.toLowerCase();
+                          return (
+                            searchTerm === '' ||
+                            ep.episode_number.toString().includes(searchTerm) ||
+                            (ep.name && ep.name.toLowerCase().includes(searchTerm)) ||
+                            (ep.overview && ep.overview.toLowerCase().includes(searchTerm))
+                          );
+                        })
+                        .map((ep) => {
+                          const isEpisodeActive = season === (selectedSeasonInPanel || season) && episode === ep.episode_number;
+                          const thumbUrl = ep.still_path
+                            ? `https://image.tmdb.org/t/p/w300${ep.still_path}`
+                            : movie.backdrop_path
+                            ? `https://image.tmdb.org/t/p/w300${movie.backdrop_path}`
+                            : null;
 
-                    {/* Right Column: Episodes */}
-                    <div className="flex-1 overflow-y-auto no-scrollbar">
-                      <div className="p-0.5 grid grid-cols-3 gap-0.5 content-start">
-                        {selectedSeasonInPanel && episodesInSeason > 0 ? (
-                          Array.from({ length: episodesInSeason }, (_, i) => i + 1)
-                            .filter((ep) => episodeSearch === '' || ep.toString().includes(episodeSearch))
-                            .map((ep) => {
-                              const isActive = season === selectedSeasonInPanel && episode === ep;
-                              return (
-                                <button
-                                  key={ep}
-                                  onClick={() => handleEpisodeSelect(ep)}
-                                  className={`w-full text-center py-1.5 rounded-sm text-[8px] transition-all ${isActive ? 'bg-red-600 text-white font-black' : 'bg-white/5 text-white/40 hover:bg-white/10'}`}
-                                >
-                                  {ep}
-                                </button>
-                              );
-                            })
-                        ) : (
-                          <div className="p-8 text-center text-white/40 text-sm">
-                            Select a season to view episodes
-                          </div>
-                        )}
+                          return (
+                            <div
+                              key={ep.episode_number}
+                              onClick={() => handleEpisodeSelect(ep.episode_number)}
+                              className={`flex flex-col md:flex-row items-start gap-4 p-4 rounded-xl cursor-pointer transition-all border ${isEpisodeActive ? 'bg-white/[0.06] border-white/20' : 'bg-transparent border-transparent hover:bg-white/[0.03] hover:border-white/5'}`}
+                            >
+                              {/* Left Column: Number & Thumbnail */}
+                              <div className="flex items-center gap-4 w-full md:w-auto flex-shrink-0">
+                                <span className={`text-2xl font-black ${isEpisodeActive ? 'text-[#E50914]' : 'text-white/30'} w-8 text-center`}>
+                                  {ep.episode_number}
+                                </span>
+                                <div className="relative aspect-video w-40 sm:w-48 bg-zinc-900 rounded-lg overflow-hidden border border-white/10 flex-shrink-0 group">
+                                  {thumbUrl ? (
+                                    <img
+                                      src={thumbUrl}
+                                      alt={ep.name}
+                                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
+                                      loading="lazy"
+                                    />
+                                  ) : (
+                                    <div className="w-full h-full flex flex-col items-center justify-center bg-gradient-to-br from-zinc-800 to-zinc-950 p-2 text-center">
+                                      <span className="text-[10px] font-black text-white/30 uppercase tracking-widest">S{(selectedSeasonInPanel || season)}:E{ep.episode_number}</span>
+                                    </div>
+                                  )}
+                                  {/* Hover Play Button Overlay */}
+                                  <div className={`absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity duration-200 z-10`}>
+                                    <div className="w-10 h-10 bg-[#E50914] rounded-full flex items-center justify-center shadow-lg transform scale-90 group-hover:scale-100 transition-transform duration-300">
+                                      <Play className="w-4 h-4 text-white fill-white ml-0.5" />
+                                    </div>
+                                  </div>
+                                  {/* Current Episode Active Indicator */}
+                                  {isEpisodeActive && (
+                                    <div className="absolute inset-0 bg-black/60 flex items-center justify-center z-10 border border-[#E50914] rounded-lg">
+                                      <span className="text-[9px] font-black uppercase tracking-widest text-[#E50914] bg-black/60 px-2 py-1 rounded">Playing</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Right Column: Title, Metadata, Overview */}
+                              <div className="flex-1 min-w-0 space-y-1 py-1">
+                                <div className="flex items-baseline justify-between gap-4">
+                                  <h4 className={`text-base font-bold truncate ${isEpisodeActive ? 'text-[#E50914]' : 'text-white'}`}>
+                                    {ep.name || `Episode ${ep.episode_number}`}
+                                  </h4>
+                                  {ep.runtime && (
+                                    <span className="text-xs text-white/40 flex-shrink-0 font-medium">
+                                      {ep.runtime}m
+                                    </span>
+                                  )}
+                                </div>
+                                <p className="text-xs text-white/50 leading-relaxed line-clamp-3">
+                                  {ep.overview || "No overview available for this episode."}
+                                </p>
+                              </div>
+                            </div>
+                          );
+                        })
+                    ) : (
+                      <div className="h-full flex flex-col items-center justify-center py-20 text-white/40">
+                        <AlertCircle className="w-8 h-8 mb-3 opacity-60" />
+                        <span className="text-sm">No episodes found for this season</span>
                       </div>
-                    </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -1505,7 +2063,7 @@ const Player: React.FC<PlayerProps> = ({
                       <span className="text-white text-[9px] font-black">{subSettings.fontSize}px</span>
                     </div>
                     <input
-                      type="range" min="10" max="32" step="1"
+                      type="range" min="10" max="72" step="1"
                       value={subSettings.fontSize}
                       onChange={(e) => setSubSettings({ ...subSettings, fontSize: parseInt(e.target.value) })}
                       className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-[#e50914]"
@@ -1518,7 +2076,7 @@ const Player: React.FC<PlayerProps> = ({
                       <span className="text-white text-[9px] font-black">{subSettings.bottom}px</span>
                     </div>
                     <input
-                      type="range" min="10" max="150" step="1"
+                      type="range" min="10" max="250" step="1"
                       value={subSettings.bottom}
                       onChange={(e) => setSubSettings({ ...subSettings, bottom: parseInt(e.target.value) })}
                       className="w-full h-1 bg-white/10 rounded-full appearance-none cursor-pointer accent-[#e50914]"
@@ -1580,8 +2138,9 @@ const Player: React.FC<PlayerProps> = ({
     }
 
     setIsFetchingDownloads(true);
+    const yearParam = year ? `&year=${year}` : '';
     try {
-      const url = `${backendUrl}/api/downloads?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}`;
+      const url = `${backendUrl}/api/downloads?title=${encodeURIComponent(titleToSearch)}&is_tv=${computedIsSeries}&season=${season}&episode=${episode}${yearParam}`;
       const res = await fetch(url);
       if (res.ok) {
         const data = await res.json();

@@ -51,17 +51,20 @@ const App: React.FC = () => {
   const [showAuthModal, setShowAuthModal] = useState(false);
   const [user, setUser] = useState<User | null>(null);
   const [showSplash, setShowSplash] = useState(true);
+  const [videoFinished, setVideoFinished] = useState(false);
+  const [dataLoaded, setDataLoaded] = useState(false);
   const [downloads, setDownloads] = useState<DownloadItem[]>([]);
   const [backendStatus, setBackendStatus] = useState<'checking' | 'online' | 'offline'>('checking');
   const [backendMode, setBackendModeState] = useState<BackendMode>(getBackendMode());
   const [customBackendUrl, setCustomBackendUrlState] = useState<string>(getCustomBackendUrl());
   const [currentBackendUrl, setCurrentBackendUrl] = useState<string>(getBackendUrl());
 
-  // Splash Screen Timeout
+  // Splash Screen Synchronization
   useEffect(() => {
-    const timer = setTimeout(() => setShowSplash(false), 1000);
-    return () => clearTimeout(timer);
-  }, []);
+    if (videoFinished && dataLoaded) {
+      setShowSplash(false);
+    }
+  }, [videoFinished, dataLoaded]);
 
   // Check Backend Connectivity
   useEffect(() => {
@@ -229,7 +232,7 @@ const App: React.FC = () => {
       } catch (err) {
         console.error("Critical Data Fetch Error:", err);
       } finally {
-        setShowSplash(false);
+        setDataLoaded(true);
       }
     };
 
@@ -265,8 +268,8 @@ const App: React.FC = () => {
     }
   };
 
-  if (showSplash || !featuredMovie) {
-    return <SplashScreen />;
+  if (showSplash) {
+    return <SplashScreen onComplete={() => setVideoFinished(true)} />;
   }
 
   if (playingMovie) {
@@ -410,10 +413,24 @@ const App: React.FC = () => {
                 <>
                   {history.length > 0 && (
                     <div className="px-6 md:px-12">
-                      <h2 className="text-[10px] font-bold text-white uppercase tracking-wider mb-6 flex items-center">
-                        <Clock className="w-3 h-3 mr-2 text-[#e50914]" />
-                        Continue Watching
-                      </h2>
+                      <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-[10px] font-bold text-white uppercase tracking-wider flex items-center">
+                          <Clock className="w-3 h-3 mr-2 text-[#e50914]" />
+                          Continue Watching
+                        </h2>
+                        <button
+                          onClick={() => {
+                            if (window.confirm("Are you sure you want to clear your continue watching history?")) {
+                              clearHistory();
+                              setHistory([]);
+                            }
+                          }}
+                          className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-[9px] font-bold uppercase tracking-wider"
+                        >
+                          <Trash2 className="w-3 h-3 text-[#e50914]" />
+                          <span>Clear Cache</span>
+                        </button>
+                      </div>
                       <div className="flex space-x-2 overflow-x-scroll no-scrollbar py-4 px-2">
                         {history.map((item) => (
                           <div

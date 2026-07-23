@@ -1,4 +1,5 @@
 import uvicorn
+import asyncio
 from fastapi import FastAPI, HTTPException, Response, Request
 from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,6 +44,11 @@ ROOT_DIR = os.path.dirname(BASE_DIR)
 local_assets_dir = os.path.join(ROOT_DIR, 'assets')
 if os.path.exists(local_assets_dir):
     app.mount("/local_assets", StaticFiles(directory=local_assets_dir), name="local_assets")
+
+@app.get("/health")
+@app.get("/api/health")
+async def health_check():
+    return {"status": "ok", "service": "movie-night-backend"}
 
 @app.get("/api/metadata")
 async def get_meta(title: str, year: int = None):
@@ -187,34 +193,126 @@ async def download_proxy(url: str, title: str = "video"):
 
     return StreamingResponse(stream_file(), headers=resp_headers, media_type="application/octet-stream")
 
+import time
+
+_stream_url_cache = {}  # key: (title, quality, year, season, episode, is_tv) -> (url, timestamp)
+CACHE_TTL = 1800  # 30 minutes
+
+# Global shared client pool for stream proxying (reuses connections instead of creating new ones per request)
+_shared_stream_client: httpx.AsyncClient | None = None
+
+def _get_shared_stream_client() -> httpx.AsyncClient:
+    global _shared_stream_client
+    if _shared_stream_client is None or _shared_stream_client.is_closed:
+        _shared_stream_client = httpx.AsyncClient(
+            timeout=httpx.Timeout(120.0, connect=15.0),
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=50, max_keepalive_connections=20)
+        )
+    return _shared_stream_client
+
+# Semaphore to limit concurrent upstream stream connections and prevent 429
+_stream_semaphore = asyncio.Semaphore(5)
+
+# Track active stream requests to prevent duplicate concurrent fetches for the same URL
+_active_stream_requests: dict[str, float] = {}  # url -> timestamp
+_STREAM_DEDUP_WINDOW = 2.0  # seconds
+
+async def _resolve_stream_url(title, quality, year, season, episode, is_tv):
+    """Resolve stream URL with caching to avoid redundant upstream API calls."""
+    cache_key = (title, quality, year, season, episode, is_tv)
+    now = time.time()
+    if cache_key in _stream_url_cache:
+        url, ts = _stream_url_cache[cache_key]
+        if now - ts < CACHE_TTL:
+            print(f"DEBUG: Stream URL cache hit for '{title}' (quality={quality})")
+            return url
+        else:
+            del _stream_url_cache[cache_key]
+
+    from api_service import get_stream_url
+    stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode, is_tv=is_tv)
+    if stream_url:
+        _stream_url_cache[cache_key] = (stream_url, now)
+    return stream_url
+
+
+@app.get("/api/stream/check")
+async def check_stream_type(
+    title: str,
+    quality: str = None,
+    year: int = None,
+    season: int = 1,
+    episode: int = 1,
+    is_tv: bool = None,
+    hevc: int = 0,
+):
+    """Lightweight endpoint to check if a stream will be transcoded, without opening the full stream."""
+    if not title:
+        raise HTTPException(status_code=400, detail="Title is required")
+    try:
+        stream_url = await _resolve_stream_url(title, quality, year, season, episode, is_tv)
+        if not stream_url:
+            raise HTTPException(status_code=404, detail="Stream not found")
+
+        import shutil
+        url_lower = stream_url.lower()
+        is_hevc_stream = ("h265" in url_lower or "hevc" in url_lower or "/h265/" in url_lower) and not hevc
+        ffmpeg_path = shutil.which("ffmpeg")
+        will_transcode = is_hevc_stream and ffmpeg_path is not None
+
+        return {
+            "transcoded": will_transcode,
+            "accept_ranges": "none" if will_transcode else "bytes",
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        print(f"Stream check error: {e}")
+        return {"transcoded": False, "accept_ranges": "bytes"}
+
+
 @app.get("/api/stream")
-async def stream_movie(title: str, request: Request, quality: str = None, year: int = None, season: int = 1, episode: int = 1, proxy: bool = True, is_tv: bool = None):
+async def stream_movie(
+    title: str,
+    request: Request,
+    quality: str = None,
+    year: int = None,
+    season: int = 1,
+    episode: int = 1,
+    proxy: bool = True,
+    is_tv: bool = None,
+    hevc: int = 0,
+    start_time: float = 0.0
+):
     if not title:
         raise HTTPException(status_code=400, detail="Title is required")
 
     try:
-        from api_service import get_stream_url
-        stream_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode, is_tv=is_tv)
+        stream_url = await _resolve_stream_url(title, quality, year, season, episode, is_tv)
         if not stream_url:
              raise HTTPException(status_code=404, detail="Stream not found")
 
         # Dynamic HEVC to H.264 Transcoding detection
         import shutil
-        import asyncio
         import sys
         
         url_lower = stream_url.lower()
-        is_hevc = "h265" in url_lower or "hevc" in url_lower or "/h265/" in url_lower
+        is_hevc = ("h265" in url_lower or "hevc" in url_lower or "/h265/" in url_lower) and not hevc
         ffmpeg_path = shutil.which("ffmpeg")
 
         if is_hevc and ffmpeg_path:
-            print(f"DEBUG: HEVC detected. Spawning ffmpeg transcoding proxy for: {stream_url[:100]}...")
+            print(f"DEBUG: HEVC detected. Spawning ffmpeg transcoding proxy for: {stream_url[:100]} starting at {start_time}s...")
             headers_str = (
-                "Referer: https://fmoviesunblocked.net/\r\n"
-                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
+                "Referer: https://netfilm.world/\r\n"
+                "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36\r\n"
             )
-            cmd = [
-                ffmpeg_path,
+            
+            cmd = [ffmpeg_path]
+            if start_time > 0.0:
+                cmd.extend(["-ss", str(start_time)])
+                
+            cmd.extend([
                 "-reconnect", "1",
                 "-reconnect_streamed", "1",
                 "-reconnect_delay_max", "5",
@@ -230,7 +328,7 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                 "-f", "mp4",
                 "-movflags", "frag_keyframe+empty_moov",
                 "pipe:1"
-            ]
+            ])
             
             import subprocess
             creationflags = 0
@@ -250,14 +348,15 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                         "status": 200,
                         "headers": {
                             "Content-Type": "video/mp4",
-                            "Accept-Ranges": "bytes",
+                            "Accept-Ranges": "none",
                             "Access-Control-Allow-Origin": "*",
                             "Cache-Control": "no-cache",
-                            "X-Content-Type-Options": "nosniff"
+                            "X-Content-Type-Options": "nosniff",
+                            "X-Transcoded": "true"
                         }
                     }
                     while True:
-                        chunk = await process.stdout.read(65536)
+                        chunk = await process.stdout.read(262144) # 256KB chunks for faster transcoding startup
                         if not chunk:
                             break
                         yield chunk
@@ -283,51 +382,72 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                 raise HTTPException(status_code=403, detail="Transcoding failed to start.")
 
         # Default streaming logic (H.264 Direct Stream or fallback if ffmpeg is missing)
-        # Enhanced Proxy Headers
+        # Enhanced Proxy Headers with netfilm.world Referer for Hakunaymatata CDN compatibility
         headers = {
-            'Referer': 'https://fmoviesunblocked.net/', 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Referer': 'https://netfilm.world/', 
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
             'Accept': '*/*',
             'Connection': 'keep-alive',
-            'Origin': 'https://fmoviesunblocked.net'
+            'Origin': 'https://netfilm.world'
         }
         
         range_header = request.headers.get('Range')
         proxy_headers = headers.copy()
         if range_header:
             proxy_headers['Range'] = range_header
-                  
-        # Use a longer timeout and better connection limits for Railway
-        client = httpx.AsyncClient(timeout=httpx.Timeout(60.0, connect=10.0), follow_redirects=True, limits=httpx.Limits(max_connections=200, max_keepalive_connections=50))
-        
+
+        # Use the shared client pool and semaphore to limit concurrent upstream connections
+        client = _get_shared_stream_client()
+
         async def stream_generator():
             try:
-                async with client.stream("GET", stream_url, headers=proxy_headers) as r:
-                    h = r.headers
-                    status = r.status_code
-                    
-                    # Essential headers for native players to start buffering
-                    msg = {
-                        "status": status,
-                        "headers": {
-                            "Content-Type": h.get("Content-Type", "video/mp4"),
-                            "Accept-Ranges": "bytes",
-                            "Access-Control-Allow-Origin": "*",
-                            "Cache-Control": "public, max-age=3600"
-                        }
-                    }
-                    if "Content-Length" in h: msg["headers"]["Content-Length"] = h["Content-Length"]
-                    if "Content-Range" in h: msg["headers"]["Content-Range"] = h["Content-Range"]
-                    
-                    yield msg
-                    
-                    # Larger chunks (64KB) for better throughput on Railway
-                    async for chunk in r.aiter_bytes(chunk_size=1048576): 
-                        yield chunk
+                async with _stream_semaphore:
+                    # Retry logic for upstream 429 responses
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            async with client.stream("GET", stream_url, headers=proxy_headers) as r:
+                                if r.status_code == 429:
+                                    if attempt < max_retries - 1:
+                                        wait_time = (attempt + 1) * 2  # 2s, 4s, 6s
+                                        print(f"DEBUG: Upstream 429, retrying in {wait_time}s (attempt {attempt+1}/{max_retries})")
+                                        await asyncio.sleep(wait_time)
+                                        continue
+                                    else:
+                                        yield {"status": 429, "headers": {"Content-Type": "text/plain", "Access-Control-Allow-Origin": "*", "Retry-After": "10"}}
+                                        return
+
+                                h = r.headers
+                                status = r.status_code
+                                
+                                # Essential headers for native players to start buffering
+                                msg = {
+                                    "status": status,
+                                    "headers": {
+                                        "Content-Type": h.get("Content-Type", "video/mp4"),
+                                        "Accept-Ranges": "bytes",
+                                        "Access-Control-Allow-Origin": "*",
+                                        "Cache-Control": "public, max-age=3600"
+                                    }
+                                }
+                                if "Content-Length" in h: msg["headers"]["Content-Length"] = h["Content-Length"]
+                                if "Content-Range" in h: msg["headers"]["Content-Range"] = h["Content-Range"]
+                                
+                                yield msg
+                                
+                                # Smaller chunks (256KB) for much lower latency and better responsiveness
+                                async for chunk in r.aiter_bytes(chunk_size=262144): 
+                                    yield chunk
+                                return  # Success, exit retry loop
+                        except httpx.HTTPStatusError as e:
+                            if e.response.status_code == 429 and attempt < max_retries - 1:
+                                wait_time = (attempt + 1) * 2
+                                print(f"DEBUG: Upstream 429 (exception), retrying in {wait_time}s")
+                                await asyncio.sleep(wait_time)
+                                continue
+                            raise
             except Exception as e:
                 print(f"DEBUG: Streaming Exception: {e}")
-            finally:
-                await client.aclose()
 
         gen = stream_generator()
         try:
@@ -337,12 +457,14 @@ async def stream_movie(title: str, request: Request, quality: str = None, year: 
                 gen, 
                 status_code=config["status"], 
                 headers=config["headers"], 
-                media_type=config["headers"]["Content-Type"]
+                media_type=config["headers"].get("Content-Type", "video/mp4")
             )
         except StopAsyncIteration:
              raise HTTPException(status_code=403, detail="Source blocked or unavailable.")
 
     except Exception as e:
+        if isinstance(e, HTTPException):
+            raise e
         print(f"Stream processing failure: {e}")
         if "403" in str(e):
              raise HTTPException(status_code=403, detail="Access Forbidden by source IP block.")

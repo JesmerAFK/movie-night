@@ -1,6 +1,6 @@
 fastapi
 uvicorn
-moviebox-api
+moviebox-api>=0.5.5
 requests
 httpx
 python-multipart
