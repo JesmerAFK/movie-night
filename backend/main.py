@@ -395,8 +395,8 @@ async def stream_movie(
                     headers=config["headers"],
                     media_type="video/mp4"
                 )
-            except StopAsyncIteration:
-                raise HTTPException(status_code=403, detail="Transcoding failed to start.")
+            except Exception as tr_err:
+                print(f"DEBUG: Transcoding failed ({tr_err}), falling back to direct CDN redirect...")
 
         # Default streaming logic: Return 307 Redirect directly to CDN stream URL.
         # This enables client browsers to stream directly from MovieBox CDN with zero datacenter IP blocks and fast buffering.
