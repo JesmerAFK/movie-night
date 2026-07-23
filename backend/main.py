@@ -213,7 +213,7 @@ async def download_proxy(url: str, title: str = "video"):
 import time
 
 _stream_url_cache = {}  # key: (title, quality, year, season, episode, is_tv) -> (url, timestamp)
-CACHE_TTL = 1800  # 30 minutes
+CACHE_TTL = 180  # 3 minutes (prevents CDN link signature expiration)
 
 # Global shared client pool for stream proxying (reuses connections instead of creating new ones per request)
 _shared_stream_client: httpx.AsyncClient | None = None
@@ -424,6 +424,16 @@ async def stream_movie(
                     for attempt in range(max_retries):
                         try:
                             async with client.stream("GET", stream_url, headers=proxy_headers) as r:
+                                if r.status_code in (403, 401) and attempt < max_retries - 1:
+                                    cache_key = (title, quality, year, season, episode, is_tv)
+                                    _stream_url_cache.pop(cache_key, None)
+                                    print(f"DEBUG: Upstream {r.status_code}, re-fetching fresh stream URL (attempt {attempt+1}/{max_retries})")
+                                    fresh_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode, is_tv=is_tv)
+                                    if fresh_url:
+                                        stream_url = fresh_url
+                                    await asyncio.sleep(1)
+                                    continue
+
                                 if r.status_code == 429:
                                     if attempt < max_retries - 1:
                                         wait_time = (attempt + 1) * 2  # 2s, 4s, 6s
