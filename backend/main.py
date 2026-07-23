@@ -398,97 +398,10 @@ async def stream_movie(
             except StopAsyncIteration:
                 raise HTTPException(status_code=403, detail="Transcoding failed to start.")
 
-        # Default streaming logic (H.264 Direct Stream or fallback if ffmpeg is missing)
-        # Enhanced Proxy Headers with netfilm.world Referer for Hakunaymatata CDN compatibility
-        headers = {
-            'Referer': 'https://netfilm.world/', 
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/148.0.0.0 Safari/537.36',
-            'Accept': '*/*',
-            'Connection': 'keep-alive',
-            'Origin': 'https://netfilm.world'
-        }
-        
-        range_header = request.headers.get('Range')
-        proxy_headers = headers.copy()
-        if range_header:
-            proxy_headers['Range'] = range_header
-
-        # Use the shared client pool and semaphore to limit concurrent upstream connections
-        client = _get_shared_stream_client()
-
-        async def stream_generator():
-            nonlocal stream_url
-            try:
-                async with _stream_semaphore:
-                    # Retry logic for upstream 429 responses
-                    max_retries = 3
-                    for attempt in range(max_retries):
-                        try:
-                            async with client.stream("GET", stream_url, headers=proxy_headers) as r:
-                                if r.status_code in (403, 401) and attempt < max_retries - 1:
-                                    cache_key = (title, quality, year, season, episode, is_tv)
-                                    _stream_url_cache.pop(cache_key, None)
-                                    print(f"DEBUG: Upstream {r.status_code}, re-fetching fresh stream URL (attempt {attempt+1}/{max_retries})")
-                                    fresh_url = await get_stream_url(title, quality=quality, year=year, season=season, episode=episode, is_tv=is_tv)
-                                    if fresh_url:
-                                        stream_url = fresh_url
-                                    await asyncio.sleep(1)
-                                    continue
-
-                                if r.status_code == 429:
-                                    if attempt < max_retries - 1:
-                                        wait_time = (attempt + 1) * 2  # 2s, 4s, 6s
-                                        print(f"DEBUG: Upstream 429, retrying in {wait_time}s (attempt {attempt+1}/{max_retries})")
-                                        await asyncio.sleep(wait_time)
-                                        continue
-                                    else:
-                                        yield {"status": 429, "headers": {"Content-Type": "text/plain", "Access-Control-Allow-Origin": "*", "Retry-After": "10"}}
-                                        return
-
-                                h = r.headers
-                                status = r.status_code
-                                
-                                # Essential headers for native players to start buffering
-                                msg = {
-                                    "status": status,
-                                    "headers": {
-                                        "Content-Type": h.get("Content-Type", "video/mp4"),
-                                        "Accept-Ranges": "bytes",
-                                        "Access-Control-Allow-Origin": "*",
-                                        "Cache-Control": "public, max-age=3600"
-                                    }
-                                }
-                                if "Content-Length" in h: msg["headers"]["Content-Length"] = h["Content-Length"]
-                                if "Content-Range" in h: msg["headers"]["Content-Range"] = h["Content-Range"]
-                                
-                                yield msg
-                                
-                                # Smaller chunks (256KB) for much lower latency and better responsiveness
-                                async for chunk in r.aiter_bytes(chunk_size=262144): 
-                                    yield chunk
-                                return  # Success, exit retry loop
-                        except httpx.HTTPStatusError as e:
-                            if e.response.status_code == 429 and attempt < max_retries - 1:
-                                wait_time = (attempt + 1) * 2
-                                print(f"DEBUG: Upstream 429 (exception), retrying in {wait_time}s")
-                                await asyncio.sleep(wait_time)
-                                continue
-                            raise
-            except Exception as e:
-                print(f"DEBUG: Streaming Exception: {e}")
-
-        gen = stream_generator()
-        try:
-            # First yield must be the status and headers dict
-            config = await anext(gen)
-            return StreamingResponse(
-                gen, 
-                status_code=config["status"], 
-                headers=config["headers"], 
-                media_type=config["headers"].get("Content-Type", "video/mp4")
-            )
-        except StopAsyncIteration:
-             raise HTTPException(status_code=403, detail="Source blocked or unavailable.")
+        # Default streaming logic: Return 307 Redirect directly to CDN stream URL.
+        # This enables client browsers to stream directly from MovieBox CDN with zero datacenter IP blocks and fast buffering.
+        print(f"DEBUG: Redirecting client directly to CDN stream URL: {stream_url[:80]}...")
+        return RedirectResponse(url=stream_url, status_code=307)
 
     except Exception as e:
         if isinstance(e, HTTPException):
