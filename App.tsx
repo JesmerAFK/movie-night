@@ -72,7 +72,7 @@ const App: React.FC = () => {
       try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 3000);
-        const res = await fetch(`${currentBackendUrl}/api/metadata?title=test`, { signal: controller.signal });
+        const res = await fetch(`${currentBackendUrl}/health`, { signal: controller.signal });
         clearTimeout(timeoutId);
         setBackendStatus(res.ok ? 'online' : 'offline');
       } catch (e) {
