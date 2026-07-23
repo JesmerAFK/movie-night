@@ -417,6 +417,7 @@ async def stream_movie(
         client = _get_shared_stream_client()
 
         async def stream_generator():
+            nonlocal stream_url
             try:
                 async with _stream_semaphore:
                     # Retry logic for upstream 429 responses
