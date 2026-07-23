@@ -420,10 +420,8 @@ const App: React.FC = () => {
                         </h2>
                         <button
                           onClick={() => {
-                            if (window.confirm("Are you sure you want to clear your continue watching history?")) {
-                              clearHistory();
-                              setHistory([]);
-                            }
+                            clearHistory();
+                            setHistory([]);
                           }}
                           className="flex items-center space-x-1.5 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-white/60 hover:text-white hover:bg-white/10 active:scale-95 transition-all text-[9px] font-bold uppercase tracking-wider"
                         >
