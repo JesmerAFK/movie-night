@@ -100,10 +100,15 @@ async def _search_moviebox(title: str):
 async def _find_best_match(title: str, year: int = None, is_tv: bool = None):
     items = await _search_moviebox(title)
     if not items:
-        # Retry with clean title
-        clean_title = re.sub(r"[^\w\s]", "", title).strip()
+        # Retry with clean title (stripping symbols)
+        clean_title = re.sub(r"[^\w\s]", " ", title).strip()
         if clean_title != title:
             items = await _search_moviebox(clean_title)
+
+    if not items and (":" in title or "-" in title):
+        main_part = re.split(r"[:\-]", title)[0].strip()
+        if main_part and main_part != title:
+            items = await _search_moviebox(main_part)
 
     if not items:
         return None
