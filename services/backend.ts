@@ -6,7 +6,7 @@ const STORAGE_KEY_CUSTOM_URL = 'jmafk_custom_backend_url';
 export type BackendMode = 'local' | 'lan' | 'cloud';
 
 export const getBackendMode = (): BackendMode => {
-    return (localStorage.getItem(STORAGE_KEY_MODE) as BackendMode) || 'local';
+    return (localStorage.getItem(STORAGE_KEY_MODE) as BackendMode) || 'cloud';
 };
 
 export const setBackendMode = (mode: BackendMode) => {
