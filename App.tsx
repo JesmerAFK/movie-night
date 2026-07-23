@@ -282,7 +282,7 @@ const App: React.FC = () => {
         isAddedToList={!!myList.find(m => m.id === playingMovie.id)}
         onToggleList={() => toggleMyList(playingMovie)}
         onMovieChange={(m) => setPlayingMovie(m)}
-        backendUrl={currentBackendUrl}
+        backendUrl={currentBackendUrl.replace(/\/+$/, '')}
       />
     );
   }

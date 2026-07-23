@@ -62,8 +62,9 @@ const Player: React.FC<PlayerProps> = ({
   isAddedToList,
   onToggleList,
   onMovieChange,
-  backendUrl = 'http://127.0.0.1:8000'
+  backendUrl: rawBackendUrl = 'http://127.0.0.1:8000'
 }) => {
+  const backendUrl = rawBackendUrl.replace(/\/+$/, '');
   const computedIsSeries = !!(movie.first_air_date || (movie as any).seasons || movie.media_type === 'tv' || (movie.name && !movie.title));
   const [loading, setLoading] = useState(true);
   const [useEmbed, setUseEmbed] = useState(false);
