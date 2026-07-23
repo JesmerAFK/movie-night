@@ -18,19 +18,24 @@ export const getCustomBackendUrl = (): string => {
 };
 
 export const setCustomBackendUrl = (url: string) => {
-    localStorage.setItem(STORAGE_KEY_CUSTOM_URL, url);
+    localStorage.setItem(STORAGE_KEY_CUSTOM_URL, url.replace(/\/+$/, ''));
 };
 
 export const getBackendUrl = (): string => {
     const mode = getBackendMode();
+    let url = DEFAULT_BACKEND_URL;
     switch (mode) {
         case 'local':
-            return 'http://127.0.0.1:8000';
+            url = 'http://127.0.0.1:8000';
+            break;
         case 'lan':
-            return 'http://192.168.254.117:8000';
+            url = 'http://192.168.254.117:8000';
+            break;
         case 'cloud':
-            return getCustomBackendUrl() || DEFAULT_BACKEND_URL;
+            url = getCustomBackendUrl() || DEFAULT_BACKEND_URL;
+            break;
         default:
-            return DEFAULT_BACKEND_URL;
+            url = DEFAULT_BACKEND_URL;
     }
+    return url.replace(/\/+$/, '');
 };
